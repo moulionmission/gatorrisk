@@ -1,0 +1,115 @@
+{
+  "smoking": {
+    "triggers": [
+      "smokes", "smoking", "smoker", "cigarettes", "tobacco", "nicotine",
+      "pack", "ppd", "pack per day", "pack-year", "pack year", "chewing tobacco",
+      "cigar", "vaping", "e-cigarette", "former smoker", "ex-smoker", "quit smoking",
+      "never smoked", "nonsmoker", "non-smoker"
+    ],
+    "status_keywords": {
+      "current": ["current", "active", "still", "continues to", "ongoing", "smokes"],
+      "former": ["former", "ex", "quit", "stopped", "ceased", "used to", "previously"],
+      "never": ["never", "denies", "non-smoker", "nonsmoker", "no history of smoking"]
+    },
+    "units": ["ppd", "pack per day", "packs per day", "pack-year", "pack year", "cigarettes/day"]
+  },
+
+  "alcohol": {
+    "triggers": [
+      "alcohol", "drinks", "drinking", "beer", "wine", "liquor", "spirits",
+      "etoh", "ethanol", "alcoholic", "alcoholism", "drinks per week",
+      "drinks per day", "social drinker", "heavy drinker", "binge drinking",
+      "sobriety", "sober", "abstains from alcohol", "denies alcohol"
+    ],
+    "status_keywords": {
+      "current": ["current", "drinks", "consumes", "uses", "social drinker", "heavy drinker"],
+      "former": ["former", "quit", "stopped", "sober", "in recovery", "abstains"],
+      "never": ["never", "denies", "no alcohol", "abstinent", "teetotal"]
+    },
+    "units": ["drinks/day", "drinks/week", "beers/day", "glasses/day", "oz/day"]
+  },
+
+  "bmi": {
+    "triggers": [
+      "bmi", "body mass index", "weight", "obese", "obesity", "overweight",
+      "underweight", "morbidly obese", "normal weight", "ideal body weight",
+      "kg/m2", "kg/m²", "body weight"
+    ],
+    "classes": {
+      "underweight": [0, 18.5],
+      "normal": [18.5, 25.0],
+      "overweight": [25.0, 30.0],
+      "obese_I": [30.0, 35.0],
+      "obese_II": [35.0, 40.0],
+      "obese_III": [40.0, 999]
+    },
+    "units": ["kg/m2", "kg/m²"]
+  },
+
+  "physical_activity": {
+    "triggers": [
+      "exercise", "physical activity", "sedentary", "active", "inactive",
+      "walks", "runs", "gym", "workout", "aerobic", "cardio", "sports",
+      "no exercise", "does not exercise", "physically active", "physically inactive",
+      "minutes per week", "days per week", "steps per day"
+    ],
+    "levels": {
+      "sedentary": ["sedentary", "inactive", "no exercise", "does not exercise", "bedridden"],
+      "low": ["minimal", "light activity", "occasionally walks", "rarely exercises"],
+      "moderate": ["moderate", "walks daily", "exercises occasionally", "light exercise"],
+      "high": ["active", "exercises regularly", "runs", "gym", "vigorous", "athlete"]
+    },
+    "units": ["min/week", "days/week", "minutes/day", "steps/day"]
+  },
+
+  "sleep": {
+    "triggers": [
+      "sleep", "insomnia", "apnea", "osa", "snoring", "fatigue",
+      "hours of sleep", "sleeps", "sleep disturbance", "hypersomnia",
+      "sleep disorder", "cpap", "bipap", "restless leg", "narcolepsy",
+      "poor sleep", "difficulty sleeping", "wakes frequently"
+    ],
+    "conditions": [
+      "obstructive sleep apnea", "osa", "insomnia", "hypersomnia",
+      "restless leg syndrome", "narcolepsy", "sleep disorder", "cpap dependent"
+    ],
+    "units": ["hours/night", "hrs/night", "hours per night"]
+  },
+
+  "diet": {
+    "triggers": [
+      "diet", "nutrition", "eats", "food", "sodium", "salt", "sugar",
+      "fat", "calories", "fruits", "vegetables", "fast food", "processed food",
+      "unhealthy diet", "healthy diet", "diabetic diet", "low sodium",
+      "high fat", "high carb", "skips meals", "poor appetite"
+    ],
+    "quality_signals": {
+      "poor": ["unhealthy", "high sodium", "high fat", "fast food", "processed", "skips meals", "poor diet"],
+      "moderate": ["moderate", "average diet", "some fruits"],
+      "good": ["healthy", "balanced", "fruits and vegetables", "low sodium", "mediterranean"]
+    },
+    "flags": [
+      "high_sodium", "high_fat", "high_sugar", "low_fiber",
+      "skips_meals", "fast_food", "vegetarian", "vegan", "diabetic_diet"
+    ]
+  },
+
+  "drug_use": {
+    "triggers": [
+      "marijuana", "cannabis", "cocaine", "heroin", "opioid", "methamphetamine",
+      "meth", "amphetamine", "illicit drug", "recreational drug", "substance use",
+      "drug use", "ivdu", "intravenous drug", "substance abuse",
+      "denies drug use", "no drug use", "drug free"
+    ],
+    "substances": [
+      "marijuana", "cannabis", "cocaine", "crack", "heroin", "opioid",
+      "methamphetamine", "meth", "amphetamine", "benzodiazepine", "mdma",
+      "ecstasy", "lsd", "pcp", "fentanyl"
+    ],
+    "status_keywords": {
+      "current": ["current", "active", "uses", "ongoing", "admits to"],
+      "former": ["former", "quit", "stopped", "used to", "previously", "in recovery"],
+      "never": ["never", "denies", "no history", "drug free"]
+    }
+  }
+}

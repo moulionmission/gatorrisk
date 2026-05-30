@@ -1,0 +1,60 @@
+# ============================================================
+#  Lifestyle Risk Factor Extractor — Configuration
+# ============================================================
+
+model:
+  # Swap to "allenai/biomed_roberta_base" or "uf-health/gatortron-base" on HiPerGator
+  ner_model: "d4data/biomedical-ner-all"
+  use_gpu: false                  # set true on HiPerGator
+  batch_size: 16
+  max_seq_length: 512
+
+extraction:
+  # Which risk factors to extract (toggle on/off)
+  risk_factors:
+    smoking: true
+    alcohol: true
+    bmi: true
+    physical_activity: true
+    sleep: true
+    diet: true
+    drug_use: true
+
+  # Confidence threshold for entity acceptance (0.0 - 1.0)
+  confidence_threshold: 0.65
+
+  # Use rule-based fallback when transformer confidence is low
+  use_rule_fallback: true
+
+preprocessing:
+  # Remove common PHI patterns (names, dates, MRNs) before processing
+  deidentify: true
+  lowercase: false
+  split_sentences: true
+  min_sentence_length: 5
+
+risk_scoring:
+  # Weights for composite risk score (must sum to 1.0)
+  weights:
+    smoking: 0.25
+    alcohol: 0.15
+    bmi: 0.20
+    physical_activity: 0.15
+    sleep: 0.10
+    diet: 0.10
+    drug_use: 0.05
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  max_note_length: 10000
+
+evaluation:
+  metrics: ["precision", "recall", "f1"]
+  # exact = value must match exactly; partial = entity span overlap counts
+  match_mode: "partial"
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_path: "logs/pipeline.log"

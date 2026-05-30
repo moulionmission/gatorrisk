@@ -1,0 +1,77 @@
+[
+  {
+    "note_id": "NOTE_001",
+    "patient_id": "PT_001",
+    "note_type": "Progress Note",
+    "text": "Patient is a 58-year-old male presenting for annual physical. He reports smoking 1.5 packs per day for the past 30 years, with no intention to quit. Drinks approximately 3 beers nightly. BMI is 34.2, consistent with class I obesity. Patient leads a sedentary lifestyle with no regular exercise. He sleeps only 4-5 hours per night and reports loud snoring; OSA is suspected. Diet is poor — high sodium, frequent fast food. Denies illicit drug use.",
+    "ground_truth": {
+      "smoking": {"status": "current", "value": 1.5, "unit": "ppd", "pack_years": 45},
+      "alcohol": {"status": "current", "value": 3, "unit": "drinks/day", "type": "beer"},
+      "bmi": {"value": 34.2, "class": "obese_I", "status": "current"},
+      "physical_activity": {"level": "sedentary", "status": "current"},
+      "sleep": {"hours": 4.5, "condition": "OSA_suspected", "status": "current"},
+      "diet": {"quality": "poor", "flags": ["high_sodium", "fast_food"]},
+      "drug_use": {"status": "never"}
+    }
+  },
+  {
+    "note_id": "NOTE_002",
+    "patient_id": "PT_002",
+    "note_type": "Initial Consultation",
+    "text": "45-year-old female with a history of hypertension. Former smoker — quit in 2018 after 10 pack-years. She is a social drinker, approximately 1-2 glasses of wine on weekends. BMI 27.1, overweight. Exercises 3 days per week, moderate intensity walking 30 minutes each session. Sleeps 7 hours nightly, no sleep complaints. Follows a generally healthy diet, low sodium per cardiac recommendations. Denies any illicit or recreational drug use.",
+    "ground_truth": {
+      "smoking": {"status": "former", "value": null, "unit": null, "pack_years": 10, "quit_year": 2018},
+      "alcohol": {"status": "current", "value": 1.5, "unit": "drinks/week", "type": "wine"},
+      "bmi": {"value": 27.1, "class": "overweight", "status": "current"},
+      "physical_activity": {"level": "moderate", "frequency": "3 days/week", "duration": "30 min", "status": "current"},
+      "sleep": {"hours": 7, "condition": null, "status": "current"},
+      "diet": {"quality": "good", "flags": ["low_sodium"]},
+      "drug_use": {"status": "never"}
+    }
+  },
+  {
+    "note_id": "NOTE_003",
+    "patient_id": "PT_003",
+    "note_type": "Emergency Department Note",
+    "text": "32-year-old male brought in by EMS. Known IVDU — admits to heroin use, last use this morning. Also uses marijuana daily. Does not smoke cigarettes. Alcohol: denies regular use. BMI not recorded, appears underweight. No known exercise routine. Sleep reportedly erratic. Diet history not obtained.",
+    "ground_truth": {
+      "smoking": {"status": "never"},
+      "alcohol": {"status": "never"},
+      "bmi": {"value": null, "class": "underweight_suspected", "status": "current"},
+      "physical_activity": {"level": "unknown"},
+      "sleep": {"hours": null, "condition": "disrupted", "status": "current"},
+      "diet": {"quality": "unknown", "flags": []},
+      "drug_use": {"status": "current", "substances": ["heroin", "marijuana"], "frequency": {"heroin": "daily", "marijuana": "daily"}}
+    }
+  },
+  {
+    "note_id": "NOTE_004",
+    "patient_id": "PT_004",
+    "note_type": "Pulmonology Follow-Up",
+    "text": "67-year-old female with COPD. 40 pack-year smoking history, currently smoking 2 packs per day. CPAP dependent for severe OSA diagnosed 3 years ago. Morbidly obese with BMI of 42.5. Walks with a cane, minimal physical activity. Reports consuming alcohol rarely — 1 drink on holidays. Low carb diet per nutritionist recommendation. Denies drug use.",
+    "ground_truth": {
+      "smoking": {"status": "current", "value": 2, "unit": "ppd", "pack_years": 40},
+      "alcohol": {"status": "current", "value": 0.1, "unit": "drinks/week", "note": "rare"},
+      "bmi": {"value": 42.5, "class": "obese_III", "status": "current"},
+      "physical_activity": {"level": "low", "status": "current"},
+      "sleep": {"hours": null, "condition": "OSA_confirmed", "treatment": "CPAP", "status": "current"},
+      "diet": {"quality": "moderate", "flags": ["low_carb"]},
+      "drug_use": {"status": "never"}
+    }
+  },
+  {
+    "note_id": "NOTE_005",
+    "patient_id": "PT_005",
+    "note_type": "Annual Wellness Visit",
+    "text": "22-year-old college student presenting for routine checkup. Non-smoker. Drinks socially, approximately 5-6 drinks on weekends. BMI 22.4, normal. Very active — runs 5 miles 4 days per week and lifts weights twice weekly. Sleeps 6 hours on weekdays, 9 on weekends. Diet consists largely of fast food and campus dining. Admits to occasional marijuana use on weekends, denies other drug use.",
+    "ground_truth": {
+      "smoking": {"status": "never"},
+      "alcohol": {"status": "current", "value": 5.5, "unit": "drinks/week", "pattern": "binge_weekend"},
+      "bmi": {"value": 22.4, "class": "normal", "status": "current"},
+      "physical_activity": {"level": "high", "activities": ["running", "weightlifting"], "status": "current"},
+      "sleep": {"hours": 7, "condition": "irregular_schedule", "status": "current"},
+      "diet": {"quality": "poor", "flags": ["fast_food"]},
+      "drug_use": {"status": "current", "substances": ["marijuana"], "frequency": {"marijuana": "weekly"}}
+    }
+  }
+]
