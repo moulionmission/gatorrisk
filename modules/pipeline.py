@@ -143,7 +143,8 @@ class Pipeline:
             rel_result = self.relation_extractor.extract(note_id, ner_result)
             logger.debug(f"[{note_id}] Relations: {len(rel_result.relations)}")
 
-            # Stage 4: Normalize
+            # Stage 4: Normalize (pass full sentences for BMI calculator)
+            rel_result.sentences = processed.sentences
             profile = self.normalizer.normalize(rel_result)
 
             # Stage 5: Risk score
