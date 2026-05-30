@@ -1,276 +1,362 @@
 """
-modules/bmi_calculator.py
-==========================
-Extracts height and weight from clinical note sentences and computes BMI.
+Module 4: Normalizer
+====================
+Converts raw Relation objects into standardized, structured JSON records.
 
-Handles all real-world clinical note formats found in MTSamples / MIMIC:
-
-  Height formats:
-    "5 feet 8 inches"     → 68 inches
-    "5'8"  / 5'8"         → 68 inches
-    "height 5 feet 8"     → 68 inches
-    "Ht: 68 inches"       → 68 inches
-    "168 cm"              → 66.1 inches
-
-  Weight formats:
-    "weight 159 pounds"   → 159 lbs
-    "weighs 232 lbs"      → 232 lbs
-    "WT: 223 pounds"      → 223 lbs
-    "66.5 kg"             → 146.6 lbs
-    "Wt: 85 kg"           → 187.4 lbs
-
-  BMI formula:
-    BMI = (weight_lbs / height_inches²) × 703
-
-  Then classified:
-    < 18.5  → underweight
-    18.5–25 → normal
-    25–30   → overweight
-    30–35   → obese_I
-    35–40   → obese_II
-    ≥ 40    → obese_III
-
-Usage:
-    from modules.bmi_calculator import BMICalculator
-    calc = BMICalculator()
-    result = calc.extract_and_compute("Weight 159 pounds, height 5 feet 4 inches.")
-    # → {"bmi": 27.3, "class": "overweight", "weight_lbs": 159, "height_inches": 64}
+Handles:
+  - Unit normalization (e.g., cigarettes/day → ppd)
+  - Range collapsing (e.g., "4-5 hours" → avg 4.5)
+  - Status consolidation (multiple mentions → single canonical status)
+  - Missing value inference from context flags
+  - Output schema enforcement per risk factor
 """
 
-import re
 import logging
-from typing import Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
+from typing import List, Dict, Optional, Any
+from modules.relation_extractor import Relation, RelationResult
+from modules.bmi_calculator import BMICalculator
 
 logger = logging.getLogger(__name__)
 
+# Singleton BMI calculator
+_bmi_calc = BMICalculator()
+
 
 # ─────────────────────────────────────────────
-# Data Structures
+# Output Schemas (one per risk factor)
 # ─────────────────────────────────────────────
 
 @dataclass
-class BMIExtraction:
-    bmi: Optional[float] = None
-    bmi_class: Optional[str] = None
-    weight_lbs: Optional[float] = None
-    height_inches: Optional[float] = None
-    weight_raw: Optional[str] = None
-    height_raw: Optional[str] = None
-    computed_from: Optional[str] = None  # "height_weight" | "weight_only_estimated"
+class SmokingRecord:
+    status: str = "unknown"          # current | former | never | unknown
+    ppd: Optional[float] = None      # packs per day
+    pack_years: Optional[float] = None
+    cigarettes_per_day: Optional[float] = None
+    temporal: Optional[str] = None
+
+
+@dataclass
+class AlcoholRecord:
+    status: str = "unknown"
+    drinks_per_day: Optional[float] = None
+    drinks_per_week: Optional[float] = None
+    pattern: Optional[str] = None    # social | heavy | binge | rare
+    temporal: Optional[str] = None
+
+
+@dataclass
+class BMIRecord:
+    status: str = "current"
+    value: Optional[float] = None    # numeric BMI
+    unit: str = "kg/m2"
+    bmi_class: Optional[str] = None  # underweight|normal|overweight|obese_I|II|III
+    weight: Optional[float] = None
+    weight_unit: Optional[str] = None
+
+
+@dataclass
+class PhysicalActivityRecord:
+    status: str = "current"
+    level: Optional[str] = None      # sedentary|low|moderate|high
+    days_per_week: Optional[int] = None
+    minutes_per_session: Optional[float] = None
+    activity_types: List[str] = field(default_factory=list)
+
+
+@dataclass
+class SleepRecord:
+    status: str = "current"
+    hours_per_night: Optional[float] = None
+    condition: Optional[str] = None  # OSA|insomnia|hypersomnia|none
+    osa_status: Optional[str] = None # suspected|confirmed
+    on_cpap: bool = False
+    snoring: bool = False
+
+
+@dataclass
+class DietRecord:
+    status: str = "current"
+    quality: Optional[str] = None    # poor|moderate|good
+    flags: List[str] = field(default_factory=list)
+
+
+@dataclass
+class DrugUseRecord:
+    status: str = "unknown"
+    substances: List[str] = field(default_factory=list)
+    route: Optional[str] = None      # oral|IV|smoked
+    temporal: Optional[str] = None
+
+
+@dataclass
+class NormalizedPatientProfile:
+    """Final structured output for a single patient note."""
+    note_id: str
+    smoking: SmokingRecord = field(default_factory=SmokingRecord)
+    alcohol: AlcoholRecord = field(default_factory=AlcoholRecord)
+    bmi: BMIRecord = field(default_factory=BMIRecord)
+    physical_activity: PhysicalActivityRecord = field(default_factory=PhysicalActivityRecord)
+    sleep: SleepRecord = field(default_factory=SleepRecord)
+    diet: DietRecord = field(default_factory=DietRecord)
+    drug_use: DrugUseRecord = field(default_factory=DrugUseRecord)
+    extraction_warnings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 # ─────────────────────────────────────────────
-# BMI Calculator
+# Normalizer Class
 # ─────────────────────────────────────────────
 
-class BMICalculator:
+class Normalizer:
     """
-    Extracts height and weight from clinical text and computes BMI.
+    Normalizes a RelationResult into a NormalizedPatientProfile.
 
-    Strategy:
-      1. Try to extract BOTH height and weight → compute exact BMI
-      2. If only weight found → estimate BMI using average US adult height
-         (5'9" for men = 69in, 5'4" for women = 64in → use 66.5in as neutral)
-      3. If BMI value already in text → use that directly (handled by NER extractor)
+    For each risk factor, consolidates multiple Relations (one per
+    sentence) into a single canonical record using priority rules.
     """
 
-    # Average adult height used when height not mentioned (66.5 inches ≈ 5'6.5")
-    DEFAULT_HEIGHT_INCHES = 66.5
-
-    # ── Height Patterns ────────────────────────
-
-    HEIGHT_PATTERNS = [
-        # "5 feet 8 inches" / "5 feet 8"
-        re.compile(r'\b(\d)\s*feet?\s*(\d{1,2})(?:\s*inch(?:es)?)?\b', re.I),
-        # "5'8" / 5'8" / 5′8
-        re.compile(r"\b(\d)['\u2019\u2018′`]\s*(\d{1,2})[\"″]?\b"),
-        # "height 5 feet 8" / "Ht: 68 inches" / "Ht 68"
-        re.compile(r'\b(?:height|ht)[:\s]+(\d{1,3})\s*(inches?|in|feet?|cm)?\b', re.I),
-        # "68 inches tall"
-        re.compile(r'\b(\d{2,3})\s*inch(?:es)?\s*(?:tall)?\b', re.I),
-        # "168 cm" / "170cm"
-        re.compile(r'\b(\d{2,3})\s*cm\b', re.I),
-    ]
-
-    # ── Weight Patterns ────────────────────────
-
-    WEIGHT_PATTERNS = [
-        # "weight 159 pounds" / "weight is 159 lbs" / "weight of 159"
-        re.compile(r'\bweight(?:\s+(?:is|was|of))?\s+(\d{2,3}\.?\d*)\s*(lbs?|pounds?|kg|kilograms?)?\b', re.I),
-        # "weighs 232 lbs" / "weighs 85 kg"
-        re.compile(r'\bweighs?\s+(\d{2,3}\.?\d*)\s*(lbs?|pounds?|kg|kilograms?)\b', re.I),
-        # "WT: 223 pounds" / "Wt 85 kg"
-        re.compile(r'\bwt[:\s]+(\d{2,3}\.?\d*)\s*(lbs?|pounds?|kg|kilograms?)?\b', re.I),
-        # "159 pounds" / "232 lbs" / "85 kg" (standalone)
-        re.compile(r'\b(\d{2,3}\.?\d*)\s*(lbs?|pounds?|kg)\b', re.I),
-        # "up three pounds" / "lost 10 pounds" — exclude these
-    ]
-
-    # Patterns to EXCLUDE (false positives)
-    WEIGHT_EXCLUDE = re.compile(
-        r'\b(lost?|gained?|lose|gain|up|down|lost\s+about)\s+\d+\s*(lbs?|pounds?|kg)',
-        re.I
-    )
-
-    def extract_and_compute(self, text: str) -> Optional[BMIExtraction]:
+    def normalize(self, rel_result: RelationResult) -> NormalizedPatientProfile:
         """
-        Main method — extract height/weight from text and compute BMI.
+        Convert relations into a structured patient profile.
 
         Args:
-            text: A clinical note or sentence
+            rel_result: Output from RelationExtractor
 
         Returns:
-            BMIExtraction or None if no weight found
+            NormalizedPatientProfile — ready for risk scoring or API output
         """
-        weight_lbs = self._extract_weight(text)
-        if weight_lbs is None:
-            return None
+        profile = NormalizedPatientProfile(note_id=rel_result.note_id)
 
-        height_inches = self._extract_height(text)
+        profile.smoking = self._normalize_smoking(rel_result.by_factor("smoking"))
+        profile.alcohol = self._normalize_alcohol(rel_result.by_factor("alcohol"))
+        profile.bmi = self._normalize_bmi(rel_result.by_factor("bmi"), raw_sentences=rel_result.sentences)
+        profile.physical_activity = self._normalize_activity(rel_result.by_factor("physical_activity"))
+        profile.sleep = self._normalize_sleep(rel_result.by_factor("sleep"))
+        profile.diet = self._normalize_diet(rel_result.by_factor("diet"))
+        profile.drug_use = self._normalize_drug_use(rel_result.by_factor("drug_use"))
 
-        result = BMIExtraction(
-            weight_lbs=weight_lbs,
-            height_inches=height_inches,
-        )
+        logger.info(f"[{rel_result.note_id}] Normalized profile created")
+        return profile
 
-        if height_inches:
-            bmi = self._compute_bmi(weight_lbs, height_inches)
-            result.computed_from = "height_weight"
-            result.weight_raw = f"{weight_lbs} lbs"
-            result.height_raw = f"{height_inches} inches"
-        else:
-            # Estimate using default height — flag as estimated
-            bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
-            result.computed_from = "weight_only_estimated"
-            result.weight_raw = f"{weight_lbs} lbs"
-            logger.debug(f"BMI estimated from weight only ({weight_lbs} lbs) — height not found")
+    # ── Factor Normalizers ────────────────────────
 
-        if bmi:
-            result.bmi = bmi
-            result.bmi_class = self._classify_bmi(bmi)
-            logger.debug(
-                f"BMI computed: {bmi} ({result.bmi_class}) "
-                f"from weight={weight_lbs}lbs height={height_inches or self.DEFAULT_HEIGHT_INCHES}in"
-            )
+    def _normalize_smoking(self, relations: List[Relation]) -> SmokingRecord:
+        rec = SmokingRecord()
+        if not relations:
+            return rec
 
-        return result
+        # Status: "never" > "former" > "current"
+        rec.status = self._consolidate_status([r.status for r in relations])
 
-    def extract_from_sentences(self, sentences: List[str]) -> Optional[BMIExtraction]:
+        for r in relations:
+            if r.unit == "ppd" and r.value is not None:
+                rec.ppd = r.value
+            if r.unit == "cigarettes/day" and r.value is not None:
+                rec.cigarettes_per_day = r.value
+                rec.ppd = rec.ppd or round(r.value / 20, 2)
+            if r.temporal:
+                rec.temporal = r.temporal
+            # Extract pack_years from flags like "pack_years:45"
+            for flag in r.flags:
+                if flag.startswith("pack_years:"):
+                    try:
+                        rec.pack_years = float(flag.split(":")[1])
+                    except ValueError:
+                        pass
+
+        return rec
+
+    def _normalize_alcohol(self, relations: List[Relation]) -> AlcoholRecord:
+        rec = AlcoholRecord()
+        if not relations:
+            return rec
+
+        rec.status = self._consolidate_status([r.status for r in relations])
+
+        for r in relations:
+            if r.value is not None:
+                if r.unit == "drinks/day":
+                    rec.drinks_per_day = r.value
+                    rec.drinks_per_week = rec.drinks_per_week or round(r.value * 7, 1)
+                elif r.unit == "drinks/week":
+                    rec.drinks_per_week = r.value
+                    rec.drinks_per_day = rec.drinks_per_day or round(r.value / 7, 2)
+
+            if "social_drinker" in r.flags:
+                rec.pattern = "social"
+            if "heavy_use" in r.flags:
+                rec.pattern = "heavy"
+            if r.temporal:
+                rec.temporal = r.temporal
+
+        # Infer pattern from quantity if not explicitly stated
+        if rec.pattern is None and rec.drinks_per_week is not None:
+            if rec.drinks_per_week <= 1:
+                rec.pattern = "rare"
+            elif rec.drinks_per_week <= 7:
+                rec.pattern = "moderate"
+            elif rec.drinks_per_week <= 14:
+                rec.pattern = "heavy"
+            else:
+                rec.pattern = "very_heavy"
+
+        return rec
+
+    def _normalize_bmi(self, relations: List[Relation], raw_sentences: List[str] = None) -> BMIRecord:
+        rec = BMIRecord()
+
+        # Step 1: Try to get explicit BMI value from NER relations
+        for r in relations:
+            if r.unit == "kg/m2" and r.value is not None:
+                rec.value = r.value
+                rec.bmi_class = r.condition or self._classify_bmi(r.value)
+            elif r.unit in ("lbs", "kg") and r.value is not None:
+                rec.weight = r.value
+                rec.weight_unit = r.unit
+
+            # Pick up class from flags
+            for flag in r.flags:
+                if flag in ("obese_I", "obese_II", "obese_III", "overweight", "underweight", "normal"):
+                    rec.bmi_class = rec.bmi_class or flag
+
+        # Step 2: If no explicit BMI found, compute from height+weight in raw text
+        if rec.value is None and raw_sentences:
+            bmi_extraction = _bmi_calc.extract_from_sentences(raw_sentences)
+            if bmi_extraction and bmi_extraction.bmi:
+                rec.value = bmi_extraction.bmi
+                rec.bmi_class = bmi_extraction.bmi_class
+                rec.weight = bmi_extraction.weight_lbs
+                rec.weight_unit = "lbs"
+                rec.unit = "kg/m2"
+                computed = bmi_extraction.computed_from
+                logger.debug(f"BMI computed from height/weight: {rec.value} ({rec.bmi_class}) [{computed}]")
+
+        return rec
+
+    def _normalize_activity(self, relations: List[Relation]) -> PhysicalActivityRecord:
+        rec = PhysicalActivityRecord()
+        if not relations:
+            return rec
+
+        for r in relations:
+            if r.condition:
+                rec.level = r.condition
+            if r.value and r.unit == "min/session":
+                rec.minutes_per_session = r.value
+            for flag in r.flags:
+                if flag == "sedentary":
+                    rec.level = "sedentary"
+                elif flag.startswith("days_per_week:"):
+                    try:
+                        rec.days_per_week = int(flag.split(":")[1])
+                    except ValueError:
+                        pass
+                elif flag.startswith("type:"):
+                    activity = flag.split(":")[1]
+                    if activity not in rec.activity_types:
+                        rec.activity_types.append(activity)
+                elif flag.startswith("miles:"):
+                    rec.activity_types.append(f"running_{flag.split(':')[1]}mi")
+
+        # Infer level from days/week if not set
+        if rec.level is None and rec.days_per_week is not None:
+            if rec.days_per_week == 0:
+                rec.level = "sedentary"
+            elif rec.days_per_week <= 2:
+                rec.level = "low"
+            elif rec.days_per_week <= 4:
+                rec.level = "moderate"
+            else:
+                rec.level = "high"
+
+        return rec
+
+    def _normalize_sleep(self, relations: List[Relation]) -> SleepRecord:
+        rec = SleepRecord()
+        if not relations:
+            return rec
+
+        for r in relations:
+            # Average range values (e.g., 4-5 hours → 4.5)
+            if r.value is not None:
+                if r.value2 is not None:
+                    rec.hours_per_night = round((r.value + r.value2) / 2, 1)
+                else:
+                    rec.hours_per_night = r.value
+
+            if r.condition:
+                rec.condition = r.condition
+
+            for flag in r.flags:
+                if "osa_suspected" in flag or "osa_likely" in flag or "osa_probable" in flag:
+                    rec.osa_status = "suspected"
+                elif "osa_confirmed" in flag or "osa_diagnosed" in flag:
+                    rec.osa_status = "confirmed"
+                if "cpap" in flag:
+                    rec.on_cpap = True
+                if "snoring" in flag:
+                    rec.snoring = True
+
+        return rec
+
+    def _normalize_diet(self, relations: List[Relation]) -> DietRecord:
+        rec = DietRecord()
+        if not relations:
+            return rec
+
+        all_flags = []
+        quality_votes = {"poor": 0, "moderate": 0, "good": 0}
+
+        for r in relations:
+            if r.condition in quality_votes:
+                quality_votes[r.condition] += 1
+            all_flags.extend(r.flags)
+
+        rec.quality = max(quality_votes, key=quality_votes.get)
+        # Deduplicate and clean flags
+        rec.flags = list(dict.fromkeys(all_flags))  # preserves order, removes dups
+
+        return rec
+
+    def _normalize_drug_use(self, relations: List[Relation]) -> DrugUseRecord:
+        rec = DrugUseRecord()
+        if not relations:
+            return rec
+
+        rec.status = self._consolidate_status([r.status for r in relations])
+
+        substances = []
+        for r in relations:
+            if r.substance:
+                for sub in r.substance.split(", "):
+                    if sub and sub not in substances:
+                        substances.append(sub)
+            if "IVDU" in substances:
+                rec.route = "IV"
+            if r.temporal:
+                rec.temporal = r.temporal
+
+        rec.substances = substances
+        return rec
+
+    # ── Helpers ───────────────────────────────────
+
+    def _consolidate_status(self, statuses: List[Optional[str]]) -> str:
         """
-        Run extraction across multiple sentences.
-        Tries each sentence and combines height from one with weight from another.
+        Resolve conflicting statuses using clinical priority:
+        "never" > "former" > "current" > "unknown"
         """
-        all_weights = []
-        all_heights = []
-
-        for sentence in sentences:
-            w = self._extract_weight(sentence)
-            h = self._extract_height(sentence)
-            if w:
-                all_weights.append(w)
-            if h:
-                all_heights.append(h)
-
-        if not all_weights:
-            return None
-
-        # Use median weight (avoid outlier values like "132/73" blood pressure)
-        # Filter to plausible adult weights: 70–700 lbs
-        valid_weights = [w for w in all_weights if 70 <= w <= 700]
-        if not valid_weights:
-            return None
-
-        # Use the most common weight if multiple found
-        weight_lbs = sorted(valid_weights)[len(valid_weights) // 2]
-
-        # Filter to plausible adult heights: 48–84 inches (4ft–7ft)
-        valid_heights = [h for h in all_heights if 48 <= h <= 84]
-        height_inches = valid_heights[0] if valid_heights else None
-
-        result = BMIExtraction(weight_lbs=weight_lbs, height_inches=height_inches)
-
-        if height_inches:
-            result.bmi = self._compute_bmi(weight_lbs, height_inches)
-            result.computed_from = "height_weight"
-        else:
-            result.bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
-            result.computed_from = "weight_only_estimated"
-
-        if result.bmi:
-            result.bmi_class = self._classify_bmi(result.bmi)
-
-        return result
-
-    # ── Private Methods ────────────────────────
-
-    def _extract_weight(self, text: str) -> Optional[float]:
-        """Extract weight in lbs from text."""
-        # Skip if this sentence is about weight change
-        if self.WEIGHT_EXCLUDE.search(text):
-            return None
-
-        for pattern in self.WEIGHT_PATTERNS:
-            m = pattern.search(text)
-            if m:
-                try:
-                    value = float(m.group(1))
-                    unit = m.group(2).lower() if len(m.groups()) >= 2 and m.group(2) else "lbs"
-
-                    # Convert kg → lbs
-                    if unit in ('kg', 'kilograms', 'kilogram'):
-                        value = round(value * 2.205, 1)
-
-                    # Sanity check — adult weight range
-                    if 70 <= value <= 700:
-                        return value
-                except (IndexError, ValueError, AttributeError):
-                    continue
-        return None
-
-    def _extract_height(self, text: str) -> Optional[float]:
-        """Extract height in inches from text."""
-        # Pattern 1: "5 feet 8 inches" / "5 feet 8"
-        m = re.search(r'\b(\d)\s*feet?\s*(\d{1,2})(?:\s*inch(?:es)?)?\b', text, re.I)
-        if m:
-            feet = int(m.group(1))
-            inches = int(m.group(2))
-            total = feet * 12 + inches
-            if 48 <= total <= 84:
-                return float(total)
-
-        # Pattern 2: "5'8" / 5'8"
-        m = re.search(r"\b(\d)['\u2019\u2018′`]\s*(\d{1,2})[\"″]?\b", text)
-        if m:
-            feet = int(m.group(1))
-            inches = int(m.group(2))
-            total = feet * 12 + inches
-            if 48 <= total <= 84:
-                return float(total)
-
-        # Pattern 3: "height 68 inches" / "Ht: 68"
-        m = re.search(r'\b(?:height|ht)[:\s]+(\d{2,3})\s*(inches?|in)?\b', text, re.I)
-        if m:
-            val = float(m.group(1))
-            if 48 <= val <= 84:
-                return val
-
-        # Pattern 4: "168 cm" → convert to inches
-        m = re.search(r'\b(1[4-9]\d|2[0-2]\d)\s*cm\b', text, re.I)
-        if m:
-            cm = float(m.group(1))
-            inches = round(cm / 2.54, 1)
-            if 48 <= inches <= 84:
-                return inches
-
-        return None
-
-    def _compute_bmi(self, weight_lbs: float, height_inches: float) -> Optional[float]:
-        """BMI = (weight_lbs / height_inches²) × 703"""
-        if height_inches <= 0:
-            return None
-        bmi = (weight_lbs / (height_inches ** 2)) * 703
-        return round(bmi, 1)
+        statuses = [s for s in statuses if s]
+        if "never" in statuses:
+            return "never"
+        if "former" in statuses:
+            return "former"
+        if "current" in statuses:
+            return "current"
+        return "unknown"
 
     def _classify_bmi(self, bmi: float) -> str:
         if bmi < 18.5:
@@ -292,37 +378,34 @@ class BMICalculator:
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    calc = BMICalculator()
+    import sys, json
+    sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
+    logging.basicConfig(level=logging.INFO)
 
-    test_cases = [
-        # height + weight → exact BMI
-        ("Weight 232 pounds, height 5 feet 8 inches.", True),
-        ("She is 5'7-1/2 tall, 148 pounds.", True),
-        ("Weight 66.5 kg. Height 168 cm.", True),
-        ("WT: 223 pounds. Ht: 68 inches.", True),
-        # weight only → estimated BMI
-        ("Weight 159 pounds.", False),
-        ("Patient weighs 85 kg.", False),
-        ("Wt 250 pounds.", False),
-        # should NOT extract (weight change context)
-        ("She lost 10 pounds last month.", False),
-        ("He gained 3 pounds.", False),
-        # no weight
-        ("Patient is alert and oriented.", False),
-    ]
+    from modules.preprocessor import ClinicalPreprocessor
+    from modules.ner_extractor import NERExtractor
+    from modules.relation_extractor import RelationExtractor
 
-    print("=" * 65)
-    print("BMI CALCULATOR TEST")
-    print("=" * 65)
-    for text, has_height in test_cases:
-        result = calc.extract_and_compute(text)
-        if result:
-            exact = "✓ exact" if result.computed_from == "height_weight" else "~ estimated"
-            print(f"\n  Input  : {text}")
-            print(f"  Weight : {result.weight_lbs} lbs")
-            print(f"  Height : {result.height_inches} in" if result.height_inches else f"  Height : not found")
-            print(f"  BMI    : {result.bmi} → {result.bmi_class} ({exact})")
-        else:
-            print(f"\n  Input  : {text}")
-            print(f"  Result : no weight found (correct)" if "lost" in text or "gained" in text or "alert" in text else f"  Result : nothing extracted")
+    text = """Patient smokes 1.5 packs per day for the past 30 years.
+Drinks 3 beers nightly.
+BMI 34.2, consistent with class I obesity.
+Sedentary lifestyle with no regular exercise.
+Sleeps 4-5 hours per night; loud snoring noted, OSA suspected.
+Diet is poor — high sodium, frequent fast food.
+Denies illicit drug use."""
+
+    preprocessor = ClinicalPreprocessor()
+    processed = preprocessor.process("TEST_001", text)
+
+    ner = NERExtractor(use_transformer=False)
+    ner_result = ner.extract("TEST_001", processed.sentences)
+
+    rel_extractor = RelationExtractor()
+    rel_result = rel_extractor.extract("TEST_001", ner_result)
+
+    normalizer = Normalizer()
+    profile = normalizer.normalize(rel_result)
+
+    print("=" * 60)
+    print("NORMALIZED PATIENT PROFILE")
+    print(json.dumps(profile.to_dict(), indent=2))
