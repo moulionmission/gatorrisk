@@ -61,13 +61,6 @@ st.markdown("""
         font-size: 0.75rem;
         font-weight: 600;
     }
-    .metric-card {
-        background: #f8f9fa;
-        border-left: 4px solid #0021A5;
-        padding: 1rem;
-        border-radius: 6px;
-        margin-bottom: 0.5rem;
-    }
     .risk-LOW      { color: #2e7d32; font-weight: 700; }
     .risk-MODERATE { color: #f57c00; font-weight: 700; }
     .risk-HIGH     { color: #c62828; font-weight: 700; }
@@ -147,7 +140,7 @@ with st.sidebar:
 # Tabs
 # ─────────────────────────────────────────────
 
-tab1, tab2, tab3 = st.tabs(["📝 Single Note", "📦 Batch Upload", "📊 MTSamples Results"])
+tab1, tab2, tab3 = st.tabs(["📝 Single Note", "📦 Batch Upload", "ℹ️ About"])
 
 # ══════════════════════════════════════════════
 # TAB 1 — Single Note
@@ -156,7 +149,6 @@ tab1, tab2, tab3 = st.tabs(["📝 Single Note", "📦 Batch Upload", "📊 MTSam
 with tab1:
     st.markdown("#### Paste a clinical note below")
 
-    # Sample note picker
     samples = {
         "-- Select a sample --": "",
         "High risk patient (smoker, obese, OSA)": """58-year-old male presenting for annual physical.
@@ -200,36 +192,37 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
     selected = st.selectbox("Or load a sample:", list(samples.keys()))
     default_text = samples[selected]
 
-    if "note_input" not in st.session_state:
-        st.session_state.note_input = ""
+    # Session state to track what's in the text area
+    if "last_sample" not in st.session_state:
+        st.session_state.last_sample = ""
 
-    if default_text and default_text != st.session_state.get("last_sample", ""):
-        
-        st.session_state.note_input = default_text
+    # Only update text area when a NEW sample is selected
+    if default_text and default_text != st.session_state.last_sample:
         st.session_state.last_sample = default_text
+        st.session_state.current_note = default_text
+    elif "current_note" not in st.session_state:
+        st.session_state.current_note = ""
 
-    note_text = st.text_area(   
-       "Clinical Note",
-        value=st.session_state.note_input,
+    note_text = st.text_area(
+        "Clinical Note",
+        value=st.session_state.current_note,
         height=220,
         placeholder="Paste any clinical note here — progress note, H&P, discharge summary...",
         label_visibility="collapsed",
         key="note_input_area",
-)
-
-
+    )
 
     run_btn = st.button("🔍 Extract Risk Factors", type="primary", use_container_width=True)
 
     if run_btn:
-        # Read directly from the widget value, not the variable
-        actual_text = st.session_state.get("note_input_area", note_text)
+        # Always read from the widget key — this captures manual edits
+        actual_text = st.session_state.get("note_input_area", "")
         if not actual_text.strip():
             st.warning("Please paste a clinical note or select a sample.")
         else:
             with st.spinner("Running GatorRisk pipeline..."):
                 result = pipeline.run_note(note_id="STREAMLIT_001", text=actual_text)
-                
+
             profile = result.normalized_profile
             risk    = result.risk_profile
 
@@ -359,19 +352,52 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
 
 with tab2:
     st.markdown("#### Upload a CSV of clinical notes")
-    st.markdown("CSV must have columns: `note_id`, `text` (and optionally `specialty`)")
+    st.markdown("CSV must have a `text` column. MTSamples format (`transcription` column) is auto-detected.")
 
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
 
     if uploaded:
         df_up = pd.read_csv(uploaded)
         st.success(f"Loaded {len(df_up)} rows")
-        st.dataframe(df_up.head(3), use_container_width=True)
+
+        # Auto-rename transcription → text
+        if "transcription" in df_up.columns and "text" not in df_up.columns:
+            df_up = df_up.rename(columns={"transcription": "text"})
+            st.info("Auto-detected MTSamples format — renamed 'transcription' to 'text'")
 
         if "text" not in df_up.columns:
-            st.error("CSV must have a `text` column with the note content.")
+            st.error("CSV must have a 'text' or 'transcription' column.")
         else:
-            limit = st.slider("Max notes to process", 5, min(200, len(df_up)), 20)
+            # Optional specialty filter — only shown if column exists
+            if "medical_specialty" in df_up.columns:
+                specialties = sorted(df_up["medical_specialty"].dropna().unique())
+                use_specialty_filter = st.checkbox(
+                    "Filter by specialty (optional)",
+                    value=False,
+                    help="Filter to specific note types. Leave unchecked to run on all notes."
+                )
+                if use_specialty_filter:
+                    selected_specs = st.multiselect(
+                        "Select specialties to include:",
+                        options=specialties,
+                        default=[s for s in specialties if s.strip() in [
+                            "Consult - History and Phy.", "General Medicine",
+                            "Emergency Room Reports", "Discharge Summary",
+                            "SOAP / Chart / Progress Notes", "Psychiatry / Psychology"
+                        ]]
+                    )
+                    if selected_specs:
+                        before = len(df_up)
+                        df_up = df_up[df_up["medical_specialty"].isin(selected_specs)].reset_index(drop=True)
+                        st.info(f"Filtered to {len(df_up)} notes from {len(selected_specs)} specialties ({before - len(df_up)} excluded)")
+
+            st.dataframe(df_up.head(3), use_container_width=True)
+
+            process_all = st.checkbox("Process entire file (may be slow for large files)")
+            if process_all:
+                limit = len(df_up)
+            else:
+                limit = st.slider("Max notes to process", 5, min(500, len(df_up)), min(200, len(df_up)))
 
             if st.button("🚀 Run Batch", type="primary"):
                 df_sample = df_up.head(limit).copy()
@@ -395,7 +421,6 @@ with tab2:
                 progress.empty()
                 st.success(f"✓ Done — {len(results)} notes processed")
 
-                # Summary table
                 rows = []
                 for r in results:
                     rows.append({
@@ -415,7 +440,6 @@ with tab2:
                 result_df = pd.DataFrame(rows)
                 st.dataframe(result_df, use_container_width=True)
 
-                # Distribution chart
                 fig = px.histogram(result_df, x="Risk Score", color="Tier",
                                    color_discrete_map={
                                        "LOW": "#2e7d32", "MODERATE": "#f57c00",
@@ -425,7 +449,6 @@ with tab2:
                 fig.update_layout(height=300, margin=dict(t=40, b=10))
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Download results
                 csv_out = result_df.to_csv(index=False)
                 st.download_button(
                     "⬇️ Download Results CSV",
@@ -436,128 +459,80 @@ with tab2:
                 )
 
 # ══════════════════════════════════════════════
-# TAB 3 — MTSamples Results
+# TAB 3 — About
 # ══════════════════════════════════════════════
 
 with tab3:
-    st.markdown("#### Pre-computed results on 1,564 real MTSamples notes")
+    st.markdown("### 🐊 About GatorRisk")
+    st.markdown("---")
 
-    results_path = Path("data/processed/mtsamples_results.json")
+    col1, col2 = st.columns(2)
 
-    if not results_path.exists():
-        st.info("Run `python scripts/run_mtsamples.py` first to generate results.")
-    else:
-        with open(results_path) as f:
-            mt_results = json.load(f)
+    with col1:
+        st.markdown("""
+        #### What It Does
+        GatorRisk reads unstructured clinical notes and automatically
+        extracts **7 lifestyle risk factors**, scoring each on a 0–1 risk scale.
 
-        scores = [r["risk_profile"]["composite_score"] for r in mt_results]
-        tiers  = [r["risk_profile"]["composite_tier"]  for r in mt_results]
+        | Factor | Extracts |
+        |---|---|
+        | 🚬 Smoking | status, ppd, pack-years |
+        | 🍺 Alcohol | status, drinks/day, pattern |
+        | ⚖️ BMI | value, obesity class |
+        | 🏃 Physical Activity | level, frequency, duration |
+        | 😴 Sleep | hours, OSA, CPAP |
+        | 🥗 Diet | quality, flags |
+        | 💊 Drug Use | status, substances |
 
-        from collections import Counter
-        tier_counts = Counter(tiers)
+        #### How to Use
+        - **Single Note** — paste any clinical note and get instant results
+        - **Batch Upload** — upload a CSV of notes, get a full results table + chart
+        - Supports MTSamples CSV format directly — no manual prep needed
+        """)
 
-        # Summary metrics
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Notes", f"{len(mt_results):,}")
-        c2.metric("Avg Risk Score", f"{sum(scores)/len(scores):.3f}")
-        c3.metric("Max Risk Score", f"{max(scores):.3f}")
-        c4.metric("MODERATE+ Notes", f"{sum(1 for t in tiers if t != 'LOW')}")
+    with col2:
+        st.markdown("""
+        #### Architecture
+        ```
+        Raw Clinical Note
+              ↓
+        [1] Preprocessor
+            clean text, de-identify PHI
+              ↓
+        [2] NER Extractor
+            rule-based + fuzzy matching
+              ↓
+        [3] Relation Extractor
+            link entities to values
+              ↓
+        [4] Normalizer + BMI Calculator
+            structured output schema
+              ↓
+        [5] Risk Scorer
+            0–1 score + tier
+        ```
 
-        st.markdown("---")
-        col_a, col_b = st.columns(2)
+        #### Data Sources
+        - **MTSamples** — 4,966 real transcribed notes (Kaggle, free)
+        - **MIMIC-III** — 2M+ ICU notes (PhysioNet, credentialing required)
+        - **UF Health EHR** — via CTSI collaboration
 
-        # Score distribution
-        with col_a:
-            fig_hist = px.histogram(
-                x=scores, nbins=30,
-                title="Composite Risk Score Distribution",
-                labels={"x": "Risk Score"},
-                color_discrete_sequence=["#0021A5"],
-            )
-            fig_hist.update_layout(height=300, margin=dict(t=40, b=10), showlegend=False)
-            st.plotly_chart(fig_hist, use_container_width=True)
+        #### Built At
+        **University of Florida** — extending the
+        [CTSI NLP Core](https://www.ctsi.ufl.edu/research/laboratory-services/nlp-core/)
+        GatorTron smoking extractor to 7 lifestyle risk factors.
 
-        # Tier pie
-        with col_b:
-            fig_pie = px.pie(
-                names=list(tier_counts.keys()),
-                values=list(tier_counts.values()),
-                title="Risk Tier Breakdown",
-                color=list(tier_counts.keys()),
-                color_discrete_map={
-                    "LOW": "#2e7d32", "MODERATE": "#f57c00",
-                    "HIGH": "#c62828", "CRITICAL": "#4a0000",
-                },
-            )
-            fig_pie.update_layout(height=300, margin=dict(t=40, b=10))
-            st.plotly_chart(fig_pie, use_container_width=True)
+        #### Links
+        - 📂 [GitHub](https://github.com/moulionmission/gatorrisk)
+        - 🏥 [UF CTSI NLP Core](https://www.ctsi.ufl.edu/research/laboratory-services/nlp-core/)
+        - 📧 Collaboration: yonghui.wu@ufl.edu
+        """)
 
-        # Factor extraction rates
-        st.markdown("### Factor Extraction Rates")
-        from collections import defaultdict
-
-        factor_extracted = defaultdict(int)
-        factors = ["smoking", "alcohol", "bmi", "physical_activity", "sleep", "diet", "drug_use"]
-        for r in mt_results:
-            profile = r["normalized_profile"]
-            for factor in factors:
-                status = profile.get(factor, {}).get("status", "unknown")
-                if status not in ("unknown", None):
-                    factor_extracted[factor] += 1
-
-        rate_data = {
-            f.replace("_", " ").title(): round(factor_extracted[f] / len(mt_results) * 100, 1)
-            for f in factors
-        }
-        fig_rate = px.bar(
-            x=list(rate_data.values()),
-            y=list(rate_data.keys()),
-            orientation="h",
-            title="% of Notes Where Factor Was Extracted",
-            labels={"x": "Extraction Rate (%)", "y": ""},
-            color=list(rate_data.values()),
-            color_continuous_scale=["#e8f5e9", "#0021A5"],
-            text=[f"{v}%" for v in rate_data.values()],
-        )
-        fig_rate.update_layout(height=320, margin=dict(t=40, b=10),
-                               coloraxis_showscale=False)
-        fig_rate.update_traces(textposition="outside")
-        st.plotly_chart(fig_rate, use_container_width=True)
-
-        # Top high risk notes
-        st.markdown("### Highest Risk Notes")
-        top_notes = sorted(mt_results, key=lambda r: -r["risk_profile"]["composite_score"])[:10]
-        top_rows = []
-        for r in top_notes:
-            p = r["normalized_profile"]
-            top_rows.append({
-                "Note ID": r["note_id"],
-                "Score": round(r["risk_profile"]["composite_score"], 3),
-                "Tier": r["risk_profile"]["composite_tier"],
-                "Smoking": p["smoking"].get("status"),
-                "BMI": p["bmi"].get("value"),
-                "BMI Class": p["bmi"].get("bmi_class"),
-                "Drug Use": p["drug_use"].get("status"),
-            })
-        st.dataframe(pd.DataFrame(top_rows), use_container_width=True)
-
-        # Smoking breakdown
-        st.markdown("### Smoking Status Across All Notes")
-        smoking_statuses = [r["normalized_profile"]["smoking"]["status"] for r in mt_results]
-        sm_counts = Counter(smoking_statuses)
-        fig_sm = px.bar(
-            x=list(sm_counts.keys()),
-            y=list(sm_counts.values()),
-            title="Smoking Status Distribution",
-            labels={"x": "Status", "y": "Count"},
-            color=list(sm_counts.keys()),
-            color_discrete_map={
-                "current": "#c62828", "former": "#f57c00",
-                "never": "#2e7d32", "unknown": "#9e9e9e",
-            },
-        )
-        fig_sm.update_layout(height=300, margin=dict(t=40, b=10), showlegend=False)
-        st.plotly_chart(fig_sm, use_container_width=True)
+    st.markdown("---")
+    st.markdown("""
+    > ⚠️ **Research Use Only** — GatorRisk is not a certified clinical decision
+    > support system. All risk assessments require review by a licensed clinician.
+    """)
 
 # ─────────────────────────────────────────────
 # Footer
