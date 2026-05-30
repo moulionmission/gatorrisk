@@ -17,6 +17,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 from modules.ner_extractor import Entity, NERResult
+from modules.negation_detector import NegationDetector
+
+_negation = NegationDetector()
 
 logger = logging.getLogger(__name__)
 
