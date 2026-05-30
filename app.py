@@ -360,7 +360,7 @@ with tab2:
         if "text" not in df_up.columns:
             st.error("CSV must have a `text` or `transcription` column with the note content.")
         else:
-            limit = st.slider("Max notes to process", 5, min(200, len(df_up)), 20)
+            limit = st.slider("Max notes to process", 5, len(df_up), min(200, len(df_up)))
 
             if st.button("🚀 Run Batch", type="primary"):
                 df_sample = df_up.head(limit).copy()
