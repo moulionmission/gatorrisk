@@ -200,13 +200,22 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
     selected = st.selectbox("Or load a sample:", list(samples.keys()))
     default_text = samples[selected]
 
-    note_text = st.text_area(
-        "Clinical Note",
-        value=default_text,
+    if "note_input" not in st.session_state:
+    st.session_state.note_input = ""
+
+    if default_text and default_text != st.session_state.get("last_sample", ""):
+        
+        st.session_state.note_input = default_text
+        st.session_state.last_sample = default_text
+
+    note_text = st.text_area(   
+       "Clinical Note",
+        value=st.session_state.note_input,
         height=220,
         placeholder="Paste any clinical note here — progress note, H&P, discharge summary...",
         label_visibility="collapsed",
-    )
+        key="note_input_area",
+)
 
     run_btn = st.button("🔍 Extract Risk Factors", type="primary", use_container_width=True)
 
