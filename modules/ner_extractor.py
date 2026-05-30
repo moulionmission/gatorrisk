@@ -82,22 +82,41 @@ class RuleBasedExtractor:
             (re.compile(r'(\d+\.?\d*)\s*(pack[s]?\s*per\s*day|ppd)', re.I), "smoking_ppd"),
             (re.compile(r'(\d+\.?\d*)\s*pack[-\s]?year[s]?', re.I), "smoking_pack_years"),
             (re.compile(r'(\d+)\s*cigarette[s]?\s*(per|a)\s*day', re.I), "smoking_cigarettes_day"),
+            # Former / quit patterns — expanded
             (re.compile(r'\b(former\s+smoker|ex[-\s]smoker|quit\s+smoking|stopped\s+smoking)\b', re.I), "smoking_former"),
+            (re.compile(r'\b(history\s+of\s+tobacco\s+use|history\s+of\s+smoking)\b', re.I), "smoking_former"),
+            (re.compile(r'\b(tobacco\s+use[,.]?\s*which\s+he\s+quit|tobacco\s+use[,.]?\s*which\s+she\s+quit)\b', re.I), "smoking_former"),
+            (re.compile(r'\b(quit\s+(?:at\s+(?:the\s+)?age|smoking|tobacco))\b', re.I), "smoking_former"),
+            (re.compile(r'\b(used\s+to\s+smoke|previously\s+smoked|no\s+longer\s+smokes?)\b', re.I), "smoking_former"),
+            # Never patterns — expanded
             (re.compile(r'\b(never\s+smoked|non[-\s]smoker|nonsmoker|denies\s+smoking)\b', re.I), "smoking_never"),
+            (re.compile(r'\b(negative\s+for\s+tobacco|no\s+tobacco|no\s+history\s+of\s+smoking)\b', re.I), "smoking_never"),
+            (re.compile(r'\bnever\s+(?:used\s+)?tobacco\b', re.I), "smoking_never"),
+            # Current patterns
             (re.compile(r'\b(current|active|still)\s+smoker\b', re.I), "smoking_current"),
             (re.compile(r'\bsmokes?\b', re.I), "smoking_trigger"),
-            (re.compile(r'\b(vaping|e-cigarette|vape)\b', re.I), "smoking_vaping"),
+            (re.compile(r'\btobacco\b', re.I), "smoking_trigger"),
+            (re.compile(r'\b(vaping|e-cigarette|vape|chewing\s+tobacco|chew|dip)\b', re.I), "smoking_vaping"),
+            # Less than X cigarettes patterns
+            (re.compile(r'\b(less\s+than\s+\d+\s+cigarettes?\s+(?:a|per)\s+day)\b', re.I), "smoking_light"),
         ]
 
         # ── Alcohol ────────────────────────────────────
         patterns["alcohol"] = [
             (re.compile(r'(\d+\.?\d*)\s*(drink[s]?|beer[s]?|glass(?:es)?)\s*(per|a|/)\s*(day|night|week)', re.I), "alcohol_quantity"),
             (re.compile(r'(\d+\.?\d*)\s*(drink[s]?|beer[s]?|glass(?:es)?)\s*(nightly|daily|weekly)', re.I), "alcohol_quantity"),
-            (re.compile(r'\b(social\s+drinker|drinks\s+socially)\b', re.I), "alcohol_social"),
-            (re.compile(r'\b(heavy\s+drinker|heavy\s+alcohol\s+use|alcohol\s+abuse)\b', re.I), "alcohol_heavy"),
+            # "one alcoholic drink per day" — common phrasing
+            (re.compile(r'(one|two|three|four|five|six)\s+alcoholic\s+drink[s]?\s*(per|a)\s*(day|week|night)', re.I), "alcohol_quantity_words"),
+            (re.compile(r'\bone\s+drink\s+(?:per|a)\s+day\b', re.I), "alcohol_quantity"),
+            (re.compile(r'\b(social\s+drinker|drinks\s+socially|occasional\s+(?:alcohol|drink|drinker))\b', re.I), "alcohol_social"),
+            (re.compile(r'\b(heavy\s+drinker|heavy\s+alcohol\s+use|alcohol\s+abuse|alcoholism)\b', re.I), "alcohol_heavy"),
             (re.compile(r'\b(sober|sobriety|in\s+recovery|abstains?\s+from\s+alcohol|quit\s+drinking)\b', re.I), "alcohol_former"),
-            (re.compile(r'\b(denies\s+alcohol|no\s+alcohol|teetotal|never\s+drinks)\b', re.I), "alcohol_never"),
+            (re.compile(r'\b(denies\s+alcohol|no\s+alcohol|teetotal|never\s+drinks|negative\s+for\s+alcohol)\b', re.I), "alcohol_never"),
+            (re.compile(r'\bnegative\s+for\s+(?:illicit\s+drugs[,\s]+alcohol|alcohol)\b', re.I), "alcohol_never"),
             (re.compile(r'\b(etoh|ethanol)\b', re.I), "alcohol_trigger"),
+            # "alcoholic drink" without quantity — still signals use
+            (re.compile(r'\balcoholic\s+drink[s]?\b', re.I), "alcohol_trigger"),
+            (re.compile(r'\bdrinks?\s+alcohol\b', re.I), "alcohol_trigger"),
         ]
 
         # ── BMI ────────────────────────────────────────
@@ -105,9 +124,17 @@ class RuleBasedExtractor:
             (re.compile(r'\bbmi\s*(?:of|is|=|:)?\s*(\d{2,3}\.?\d*)\b', re.I), "bmi_value"),
             (re.compile(r'\bbody\s+mass\s+index\s*(?:of|is|=|:)?\s*(\d{2,3}\.?\d*)\b', re.I), "bmi_value"),
             (re.compile(r'\b(morbidly\s+obese|obese\s+class\s+(?:I{1,3}|1|2|3)|class\s+(?:I{1,3}|1|2|3)\s+obes\w+)\b', re.I), "bmi_class"),
-            (re.compile(r'\b(overweight|obese|obesity)\b', re.I), "bmi_class"),
+            (re.compile(r'\b(overweight|obese|obesity|morbid\s+obesity)\b', re.I), "bmi_class"),
             (re.compile(r'\b(underweight|normal\s+weight|ideal\s+body\s+weight)\b', re.I), "bmi_class"),
+            # Weight in lbs/kg — very common in clinical notes
             (re.compile(r'\bweigh[st]?\s+(\d{2,3})\s*(lbs?|kg|pounds?|kilograms?)\b', re.I), "bmi_weight"),
+            (re.compile(r'\bweight\s+(?:is\s+|was\s+|of\s+)?(\d{2,3})\s*(lbs?|kg|pounds?)\b', re.I), "bmi_weight"),
+            (re.compile(r'\b(\d{2,3})\s*(lbs?|pounds?|kg)\b', re.I), "bmi_weight"),
+            # "weighs X pounds" / "weight X kg"
+            (re.compile(r'\bweighs?\s+(\d{2,3}\.?\d*)\s*(lbs?|pounds?|kg|kilograms?)\b', re.I), "bmi_weight"),
+            # Weight loss context
+            (re.compile(r'\bweight\s+loss\b', re.I), "bmi_weight_loss"),
+            (re.compile(r'\b(gained?|lost?)\s+\d+\s+(lbs?|pounds?|kg)\b', re.I), "bmi_weight_change"),
         ]
 
         # ── Physical Activity ──────────────────────────
@@ -116,8 +143,14 @@ class RuleBasedExtractor:
             (re.compile(r'\b(\d+)\s*minute[s]?\s*(per|a|/)\s*(day|session)\b', re.I), "activity_duration"),
             (re.compile(r'\b(\d+[,.]?\d*)\s*mile[s]?\s*(per|a|/)\s*(day|week)\b', re.I), "activity_distance"),
             (re.compile(r'\b(sedentary\s+lifestyle|no\s+regular\s+exercise|does\s+not\s+exercise|physically\s+inactive)\b', re.I), "activity_sedentary"),
+            (re.compile(r'\b(not\s+(?:very\s+)?active|no\s+physical\s+activity|inactive)\b', re.I), "activity_sedentary"),
             (re.compile(r'\b(physically\s+active|exercises\s+regularly|active\s+lifestyle)\b', re.I), "activity_active"),
             (re.compile(r'\b(walks?|runs?|jogs?|swims?|cycles?|gyms?|workouts?|aerobic|cardio)\b', re.I), "activity_type"),
+            # "does cardio" / "does exercise at home" — common in MTSamples
+            (re.compile(r'\bdoes?\s+(cardio|exercise[s]?|workout[s]?)\b', re.I), "activity_active"),
+            (re.compile(r'\bexercises?\s+(at\s+home|regularly|daily|three\s+times|twice)\b', re.I), "activity_active"),
+            # Difficulty with activity — signals low activity
+            (re.compile(r'\bdifficulty\s+(walking|climbing\s+stairs|exercising)\b', re.I), "activity_sedentary"),
         ]
 
         # ── Sleep ──────────────────────────────────────
@@ -127,9 +160,13 @@ class RuleBasedExtractor:
             (re.compile(r'\b(obstructive\s+sleep\s+apnea|osa|sleep\s+apnea)\b', re.I), "sleep_apnea"),
             (re.compile(r'\b(insomnia|difficulty\s+sleeping|can\'t\s+sleep|trouble\s+sleeping)\b', re.I), "sleep_insomnia"),
             (re.compile(r'\b(cpap|bipap)\b', re.I), "sleep_cpap"),
-            (re.compile(r'\b(snoring|snores|loud\s+snoring)\b', re.I), "sleep_snoring"),
+            (re.compile(r'\b(snoring|snores|loud\s+snoring|difficulty\s+snoring)\b', re.I), "sleep_snoring"),
             (re.compile(r'\b(hypersomnia|narcolepsy|excessive\s+daytime\s+sleepiness)\b', re.I), "sleep_hypersomnia"),
             (re.compile(r'\bosa\s+(suspected|likely|probable|confirmed|diagnosed)\b', re.I), "sleep_osa_status"),
+            # Fatigue as sleep proxy
+            (re.compile(r'\b(chronic\s+fatigue|excessive\s+fatigue|daytime\s+fatigue)\b', re.I), "sleep_fatigue"),
+            # Non-restorative sleep
+            (re.compile(r'\b(non[-\s]restorative\s+sleep|poor\s+sleep|wakes?\s+(?:up\s+)?frequently)\b', re.I), "sleep_insomnia"),
         ]
 
         # ── Diet ───────────────────────────────────────
@@ -140,8 +177,16 @@ class RuleBasedExtractor:
             (re.compile(r'\b(balanced\s+diet|healthy\s+diet|mediterranean\s+diet|well[-\s]balanced)\b', re.I), "diet_quality_good"),
             (re.compile(r'\b(poor\s+diet|unhealthy\s+diet|poor\s+nutrition)\b', re.I), "diet_quality_poor"),
             (re.compile(r'\b(vegetarian|vegan|plant[-\s]based)\b', re.I), "diet_type"),
-            (re.compile(r'\b(diabetic\s+diet|cardiac\s+diet|renal\s+diet)\b', re.I), "diet_therapeutic"),
+            (re.compile(r'\b(diabetic\s+diet|cardiac\s+diet|renal\s+diet|low[-\s]carb\s+diet)\b', re.I), "diet_therapeutic"),
             (re.compile(r'\b(skips?\s+meals?|poor\s+appetite|decreased\s+appetite)\b', re.I), "diet_behavior"),
+            # "eating and drinking well" — positive signal
+            (re.compile(r'\b(eating\s+(?:and\s+drinking\s+)?well|good\s+appetite)\b', re.I), "diet_quality_good"),
+            # Soft drinks / fruit drinks — dietary flag
+            (re.compile(r'\b(soft\s+drinks?|fruit\s+drinks?|soda|sugary\s+drinks?)\b', re.I), "diet_quality_poor"),
+            # Big portions / overeating
+            (re.compile(r'\b(big\s+portions?|overeating|emotional\s+eater|binge\s+eating)\b', re.I), "diet_behavior"),
+            # Weight loss program context
+            (re.compile(r'\b(weight\s+watchers?|calorie\s+restrict|dieting)\b', re.I), "diet_therapeutic"),
         ]
 
         # ── Drug Use ───────────────────────────────────
@@ -153,7 +198,11 @@ class RuleBasedExtractor:
             (re.compile(r'\b(methamphetamine|meth|crystal\s+meth|amphetamine)\b', re.I), "drug_stimulant"),
             (re.compile(r'\b(ivdu|intravenous\s+drug\s+use[r]?|iv\s+drug)\b', re.I), "drug_ivdu"),
             (re.compile(r'\b(denies\s+(?:illicit\s+)?drug|no\s+(?:illicit\s+)?drug|drug[-\s]free)\b', re.I), "drug_never"),
+            (re.compile(r'\bnegative\s+for\s+illicit\s+drugs?\b', re.I), "drug_never"),
+            # "got addicted to drugs" — MTSamples real pattern
+            (re.compile(r'\b(addict(?:ed)?\s+to\s+drugs?|drug\s+addict)\b', re.I), "drug_trigger"),
             (re.compile(r'\b(illicit\s+drug|recreational\s+drug|substance\s+abuse|substance\s+use)\b', re.I), "drug_trigger"),
+            (re.compile(r'\b(no\s+history\s+of\s+(?:drug|substance)\s+use|denies\s+(?:drug|substance)\s+use)\b', re.I), "drug_never"),
         ]
 
         return patterns
