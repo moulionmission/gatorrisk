@@ -240,7 +240,7 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
                         {"range": [0,  25], "color": "#e8f5e9"},
                         {"range": [25, 50], "color": "#fff3e0"},
                         {"range": [50, 75], "color": "#ffebee"},
-                        {"range": [75,100], "color": "#b71c1c22"},
+                        {"range": [75,100], "color": "#ffcdd2"},
                     ],
                     "threshold": {
                         "line": {"color": tier_color, "width": 4},
