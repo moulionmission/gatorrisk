@@ -75,7 +75,12 @@ class RelationExtractor:
             r'\b(never|denies?|no\s+history\s+of|non[-\s]?smoker|nonsmoker|drug[-\s]free|abstain|teetotal)\b', re.I
         ),
         "former": re.compile(
-            r'\b(former|ex[-\s]?|quit|stopped|ceased|used\s+to|previously|in\s+recovery|sober|sobriety)\b', re.I
+            r'\b(former\s+smoker|ex[-\s]?smoker|stopped\s+smoking|ceased\s+smoking|used\s+to\s+smoke|in\s+recovery|sober|sobriety)\b', re.I
+        ),
+        # "quit" only = former if NOT in a negated context like "no intention to quit"
+        "quit_standalone": re.compile(r'\bquit\b', re.I),
+        "quit_negated": re.compile(
+            r'\b(no\s+intention\s+to\s+quit|refuses?\s+to\s+quit|unwilling\s+to\s+quit|will\s+not\s+quit|does\s+not\s+want\s+to\s+quit|prior\s+to\s+quit|agrees?\s+to\s+quit)\b', re.I
         ),
     }
 
@@ -166,6 +171,10 @@ class RelationExtractor:
             return "never"
         if self.STATUS_PATTERNS["former"].search(sentence):
             return "former"
+        # "quit" = former ONLY when not negated ("no intention to quit" = still current)
+        if self.STATUS_PATTERNS["quit_standalone"].search(sentence):
+            if not self.STATUS_PATTERNS["quit_negated"].search(sentence):
+                return "former"
         return "current"
 
     def _extract_temporal(self, sentence: str) -> Optional[str]:
