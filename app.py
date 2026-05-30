@@ -192,31 +192,21 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
     selected = st.selectbox("Or load a sample:", list(samples.keys()))
     default_text = samples[selected]
 
-    # Session state to track what's in the text area
-    if "last_sample" not in st.session_state:
-        st.session_state.last_sample = ""
-
-    # Only update text area when a NEW sample is selected
-    if default_text and default_text != st.session_state.last_sample:
-        st.session_state.last_sample = default_text
-        st.session_state.current_note = default_text
-    elif "current_note" not in st.session_state:
-        st.session_state.current_note = ""
-
+    # Use default_text directly as value — Streamlit text_area with no key
+    # means the widget value is always what the user sees/types
+    # We DON'T use session_state here to avoid conflicts
     note_text = st.text_area(
         "Clinical Note",
-        value=st.session_state.current_note,
+        value=default_text,
         height=220,
         placeholder="Paste any clinical note here — progress note, H&P, discharge summary...",
         label_visibility="collapsed",
-        key="note_input_area",
     )
 
     run_btn = st.button("🔍 Extract Risk Factors", type="primary", use_container_width=True)
 
     if run_btn:
-        # Always read from the widget key — this captures manual edits
-        actual_text = st.session_state.get("note_input_area", "")
+        actual_text = note_text
         if not actual_text.strip():
             st.warning("Please paste a clinical note or select a sample.")
         else:
