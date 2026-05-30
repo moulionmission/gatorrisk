@@ -382,8 +382,8 @@ with tab2:
                 st.info(f"All {after} notes contain lifestyle content — no filtering needed")
 
             st.dataframe(df_up.head(3), use_container_width=True)
-        else:
-            limit = st.slider("Max notes to process", 5, len(df_up), min(200, len(df_up)))
+            else:
+                limit = st.slider("Max notes to process", 5, len(df_up), min(200, len(df_up)))
 
             if st.button("🚀 Run Batch", type="primary"):
                 df_sample = df_up.head(limit).copy()
