@@ -343,10 +343,9 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
 # ══════════════════════════════════════════════
 # TAB 2 — Batch Upload
 # ══════════════════════════════════════════════
-
 with tab2:
     st.markdown("#### Upload a CSV of clinical notes")
-    st.markdown("CSV must have columns: `note_id`, `text` (and optionally `specialty`)")
+    st.markdown("Supports MTSamples format directly — just upload the raw CSV.")
 
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
 
@@ -354,36 +353,33 @@ with tab2:
         df_up = pd.read_csv(uploaded)
         st.success(f"Loaded {len(df_up)} rows")
 
-        # Auto-rename transcription → text (handles MTSamples directly)
+        # Auto-rename transcription → text
         if "transcription" in df_up.columns and "text" not in df_up.columns:
             df_up = df_up.rename(columns={"transcription": "text"})
-            st.info("Auto-detected MTSamples format — renamed 'transcription' column to 'text'")
+            st.info("Auto-detected MTSamples format — renamed 'transcription' to 'text'")
 
         if "text" not in df_up.columns:
             st.error("CSV must have a 'text' or 'transcription' column.")
         else:
-            # Auto-filter to notes that contain social history keywords
-            social_keywords = (
-                "social history|smok|alcohol|bmi|exercise|"
-                "sleep|drug use|tobacco|drinks|sedentary|obesity"
-            )
+            # Auto-filter to notes with social history content
+            social_keywords = "social history|smok|alcohol|bmi|exercise|sleep|drug use|tobacco|drinks|sedentary|obesity"
             before = len(df_up)
             mask = df_up["text"].str.contains(social_keywords, case=False, na=False)
             df_up = df_up[mask].reset_index(drop=True)
             after = len(df_up)
 
             if before != after:
-                st.info(
-                    f"🔍 Auto-filtered: {before} total notes → "
-                    f"**{after} notes with lifestyle content** "
-                    f"({before - after} notes skipped — no social history found)"
-                )
+                st.info(f"🔍 Auto-filtered: {before} total notes → **{after} notes with lifestyle content** ({before - after} notes skipped)")
             else:
                 st.info(f"All {after} notes contain lifestyle content — no filtering needed")
 
             st.dataframe(df_up.head(3), use_container_width=True)
+
+            process_all = st.checkbox("Process entire file (may be slow for large files)")
+            if process_all:
+                limit = len(df_up)
             else:
-                limit = st.slider("Max notes to process", 5, len(df_up), min(200, len(df_up)))
+                limit = st.slider("Max notes to process", 5, min(500, len(df_up)), min(200, len(df_up)))
 
             if st.button("🚀 Run Batch", type="primary"):
                 df_sample = df_up.head(limit).copy()
@@ -407,7 +403,6 @@ with tab2:
                 progress.empty()
                 st.success(f"✓ Done — {len(results)} notes processed")
 
-                # Summary table
                 rows = []
                 for r in results:
                     rows.append({
@@ -427,7 +422,6 @@ with tab2:
                 result_df = pd.DataFrame(rows)
                 st.dataframe(result_df, use_container_width=True)
 
-                # Distribution chart
                 fig = px.histogram(result_df, x="Risk Score", color="Tier",
                                    color_discrete_map={
                                        "LOW": "#2e7d32", "MODERATE": "#f57c00",
@@ -437,7 +431,6 @@ with tab2:
                 fig.update_layout(height=300, margin=dict(t=40, b=10))
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Download results
                 csv_out = result_df.to_csv(index=False)
                 st.download_button(
                     "⬇️ Download Results CSV",
