@@ -147,7 +147,7 @@ with st.sidebar:
 # Tabs
 # ─────────────────────────────────────────────
 
-tab1, tab2, tab3 = st.tabs(["📝 Single Note", "📦 Batch Upload", "ℹ️ About"])
+tab1, tab2, tab3 = st.tabs(["📝 Single Note", "📦 Batch Upload", "📊 MTSamples Results"])
 
 # ══════════════════════════════════════════════
 # TAB 1 — Single Note
@@ -240,7 +240,7 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
                         {"range": [0,  25], "color": "#e8f5e9"},
                         {"range": [25, 50], "color": "#fff3e0"},
                         {"range": [50, 75], "color": "#ffebee"},
-                        {"range": [75,100], "color": "#ffcdd2"},
+                        {"range": [75,100], "color": "#b71c1c22"},
                     ],
                     "threshold": {
                         "line": {"color": tier_color, "width": 4},
@@ -343,43 +343,22 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
 # ══════════════════════════════════════════════
 # TAB 2 — Batch Upload
 # ══════════════════════════════════════════════
+
 with tab2:
     st.markdown("#### Upload a CSV of clinical notes")
-    st.markdown("Supports MTSamples format directly — just upload the raw CSV.")
+    st.markdown("CSV must have columns: `note_id`, `text` (and optionally `specialty`)")
 
     uploaded = st.file_uploader("Upload CSV", type=["csv"])
 
     if uploaded:
         df_up = pd.read_csv(uploaded)
         st.success(f"Loaded {len(df_up)} rows")
-
-        # Auto-rename transcription → text
-        if "transcription" in df_up.columns and "text" not in df_up.columns:
-            df_up = df_up.rename(columns={"transcription": "text"})
-            st.info("Auto-detected MTSamples format — renamed 'transcription' to 'text'")
+        st.dataframe(df_up.head(3), use_container_width=True)
 
         if "text" not in df_up.columns:
-            st.error("CSV must have a 'text' or 'transcription' column.")
+            st.error("CSV must have a `text` column with the note content.")
         else:
-            # Auto-filter to notes with social history content
-            social_keywords = "social history|smok|alcohol|bmi|exercise|sleep|drug use|tobacco|drinks|sedentary|obesity"
-            before = len(df_up)
-            mask = df_up["text"].str.contains(social_keywords, case=False, na=False)
-            df_up = df_up[mask].reset_index(drop=True)
-            after = len(df_up)
-
-            if before != after:
-                st.info(f"🔍 Auto-filtered: {before} total notes → **{after} notes with lifestyle content** ({before - after} notes skipped)")
-            else:
-                st.info(f"All {after} notes contain lifestyle content — no filtering needed")
-
-            st.dataframe(df_up.head(3), use_container_width=True)
-
-            process_all = st.checkbox("Process entire file (may be slow for large files)")
-            if process_all:
-                limit = len(df_up)
-            else:
-                limit = st.slider("Max notes to process", 5, min(500, len(df_up)), min(200, len(df_up)))
+            limit = st.slider("Max notes to process", 5, min(200, len(df_up)), 20)
 
             if st.button("🚀 Run Batch", type="primary"):
                 df_sample = df_up.head(limit).copy()
@@ -403,6 +382,7 @@ with tab2:
                 progress.empty()
                 st.success(f"✓ Done — {len(results)} notes processed")
 
+                # Summary table
                 rows = []
                 for r in results:
                     rows.append({
@@ -422,6 +402,7 @@ with tab2:
                 result_df = pd.DataFrame(rows)
                 st.dataframe(result_df, use_container_width=True)
 
+                # Distribution chart
                 fig = px.histogram(result_df, x="Risk Score", color="Tier",
                                    color_discrete_map={
                                        "LOW": "#2e7d32", "MODERATE": "#f57c00",
@@ -431,6 +412,7 @@ with tab2:
                 fig.update_layout(height=300, margin=dict(t=40, b=10))
                 st.plotly_chart(fig, use_container_width=True)
 
+                # Download results
                 csv_out = result_df.to_csv(index=False)
                 st.download_button(
                     "⬇️ Download Results CSV",
@@ -443,37 +425,127 @@ with tab2:
 # ══════════════════════════════════════════════
 # TAB 3 — MTSamples Results
 # ══════════════════════════════════════════════
+
 with tab3:
-    st.markdown("### 🐊 About GatorRisk")
-    st.markdown("---")
+    st.markdown("#### Pre-computed results on 1,564 real MTSamples notes")
 
-    col1, col2 = st.columns(2)
+    results_path = Path("data/processed/mtsamples_results.json")
 
-    with col1:
-        st.markdown("""
-        #### What It Does
-        GatorRisk reads unstructured clinical notes and automatically
-        extracts **7 lifestyle risk factors**, scoring each on a 0–1 risk scale.
+    if not results_path.exists():
+        st.info("Run `python scripts/run_mtsamples.py` first to generate results.")
+    else:
+        with open(results_path) as f:
+            mt_results = json.load(f)
 
-        | Factor | Extracts |
-        |---|---|
-        | 🚬 Smoking | status, ppd, pack-years |
-        | 🍺 Alcohol | status, drinks/day, pattern |
-        | ⚖️ BMI | value, obesity class |
-        | 🏃 Physical Activity | level, frequency, duration |
-        | 😴 Sleep | hours, OSA, CPAP |
-        | 🥗 Diet | quality, flags |
-        | 💊 Drug Use | status, substances |
+        scores = [r["risk_profile"]["composite_score"] for r in mt_results]
+        tiers  = [r["risk_profile"]["composite_tier"]  for r in mt_results]
 
-        #### How to Use
-        - **Single Note** — paste any clinical note and get instant results
-        - **Batch Upload** — upload a CSV of notes, get a full results table + chart
-        - Supports MTSamples CSV format directly — no manual prep needed
-        """)
+        from collections import Counter
+        tier_counts = Counter(tiers)
 
-    with col2:
-        st.markdown("")
-        #### Architecture
+        # Summary metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Notes", f"{len(mt_results):,}")
+        c2.metric("Avg Risk Score", f"{sum(scores)/len(scores):.3f}")
+        c3.metric("Max Risk Score", f"{max(scores):.3f}")
+        c4.metric("MODERATE+ Notes", f"{sum(1 for t in tiers if t != 'LOW')}")
+
+        st.markdown("---")
+        col_a, col_b = st.columns(2)
+
+        # Score distribution
+        with col_a:
+            fig_hist = px.histogram(
+                x=scores, nbins=30,
+                title="Composite Risk Score Distribution",
+                labels={"x": "Risk Score"},
+                color_discrete_sequence=["#0021A5"],
+            )
+            fig_hist.update_layout(height=300, margin=dict(t=40, b=10), showlegend=False)
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+        # Tier pie
+        with col_b:
+            fig_pie = px.pie(
+                names=list(tier_counts.keys()),
+                values=list(tier_counts.values()),
+                title="Risk Tier Breakdown",
+                color=list(tier_counts.keys()),
+                color_discrete_map={
+                    "LOW": "#2e7d32", "MODERATE": "#f57c00",
+                    "HIGH": "#c62828", "CRITICAL": "#4a0000",
+                },
+            )
+            fig_pie.update_layout(height=300, margin=dict(t=40, b=10))
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # Factor extraction rates
+        st.markdown("### Factor Extraction Rates")
+        from collections import defaultdict
+
+        factor_extracted = defaultdict(int)
+        factors = ["smoking", "alcohol", "bmi", "physical_activity", "sleep", "diet", "drug_use"]
+        for r in mt_results:
+            profile = r["normalized_profile"]
+            for factor in factors:
+                status = profile.get(factor, {}).get("status", "unknown")
+                if status not in ("unknown", None):
+                    factor_extracted[factor] += 1
+
+        rate_data = {
+            f.replace("_", " ").title(): round(factor_extracted[f] / len(mt_results) * 100, 1)
+            for f in factors
+        }
+        fig_rate = px.bar(
+            x=list(rate_data.values()),
+            y=list(rate_data.keys()),
+            orientation="h",
+            title="% of Notes Where Factor Was Extracted",
+            labels={"x": "Extraction Rate (%)", "y": ""},
+            color=list(rate_data.values()),
+            color_continuous_scale=["#e8f5e9", "#0021A5"],
+            text=[f"{v}%" for v in rate_data.values()],
+        )
+        fig_rate.update_layout(height=320, margin=dict(t=40, b=10),
+                               coloraxis_showscale=False)
+        fig_rate.update_traces(textposition="outside")
+        st.plotly_chart(fig_rate, use_container_width=True)
+
+        # Top high risk notes
+        st.markdown("### Highest Risk Notes")
+        top_notes = sorted(mt_results, key=lambda r: -r["risk_profile"]["composite_score"])[:10]
+        top_rows = []
+        for r in top_notes:
+            p = r["normalized_profile"]
+            top_rows.append({
+                "Note ID": r["note_id"],
+                "Score": round(r["risk_profile"]["composite_score"], 3),
+                "Tier": r["risk_profile"]["composite_tier"],
+                "Smoking": p["smoking"].get("status"),
+                "BMI": p["bmi"].get("value"),
+                "BMI Class": p["bmi"].get("bmi_class"),
+                "Drug Use": p["drug_use"].get("status"),
+            })
+        st.dataframe(pd.DataFrame(top_rows), use_container_width=True)
+
+        # Smoking breakdown
+        st.markdown("### Smoking Status Across All Notes")
+        smoking_statuses = [r["normalized_profile"]["smoking"]["status"] for r in mt_results]
+        sm_counts = Counter(smoking_statuses)
+        fig_sm = px.bar(
+            x=list(sm_counts.keys()),
+            y=list(sm_counts.values()),
+            title="Smoking Status Distribution",
+            labels={"x": "Status", "y": "Count"},
+            color=list(sm_counts.keys()),
+            color_discrete_map={
+                "current": "#c62828", "former": "#f57c00",
+                "never": "#2e7d32", "unknown": "#9e9e9e",
+            },
+        )
+        fig_sm.update_layout(height=300, margin=dict(t=40, b=10), showlegend=False)
+        st.plotly_chart(fig_sm, use_container_width=True)
+
 # ─────────────────────────────────────────────
 # Footer
 # ─────────────────────────────────────────────
