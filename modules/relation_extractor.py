@@ -210,12 +210,19 @@ class RelationExtractor:
             rel.status = "former"
         elif "smoking_current" in sub_labels:
             rel.status = "current"
+        # If we have explicit current signals (smokes/ppd/cigarettes), force current
+        elif any(s in sub_labels for s in ("smoking_trigger", "smoking_ppd", "smoking_cigarettes_day", "smoking_light", "smoking_vaping")):
+            rel.status = "current"
         elif "smoking_history" in sub_labels:
             # "history of smoking" — ambiguous. Check if quit/former context exists
             if self.STATUS_PATTERNS["former"].search(sentence):
                 rel.status = "former"
-            elif re.search(r'(no\s+longer|quit|stopped|cessation)', sentence, re.I):
+            elif re.search(r'(no\s+longer|stopped\s+smoking|cessation)', sentence, re.I):
                 rel.status = "former"
+            elif re.search(r'quit', sentence, re.I):
+                # only former if not negated
+                if not re.search(r'(no\s+intention\s+to\s+quit|refuses?\s+to\s+quit|unwilling\s+to\s+quit|will\s+not\s+quit)', sentence, re.I):
+                    rel.status = "former"
             else:
                 rel.status = "current"  # still smoking unless told otherwise
 
