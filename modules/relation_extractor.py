@@ -1,362 +1,267 @@
 """
-Module 4: Normalizer
-====================
-Converts raw Relation objects into standardized, structured JSON records.
+Module 3: Relation Extractor
+============================
+Links extracted entities to their associated values, quantities,
+statuses, and temporal information within the same sentence context.
 
-Handles:
-  - Unit normalization (e.g., cigarettes/day → ppd)
-  - Range collapsing (e.g., "4-5 hours" → avg 4.5)
-  - Status consolidation (multiple mentions → single canonical status)
-  - Missing value inference from context flags
-  - Output schema enforcement per risk factor
+Example:
+  Input entities: [smoking_trigger: "smokes"], [smoking_ppd: "1.5 packs per day"]
+  Output relation: smoking → {trigger: "smokes", quantity: 1.5, unit: "ppd"}
+
+This module works at the SENTENCE level — entities in the same
+sentence are candidates for relation linking.
 """
 
+import re
 import logging
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Optional, Any
-from modules.relation_extractor import Relation, RelationResult
-from modules.bmi_calculator import BMICalculator
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple
+from modules.ner_extractor import Entity, NERResult
 
 logger = logging.getLogger(__name__)
 
-# Singleton BMI calculator
-_bmi_calc = BMICalculator()
-
 
 # ─────────────────────────────────────────────
-# Output Schemas (one per risk factor)
+# Data Structures
 # ─────────────────────────────────────────────
 
 @dataclass
-class SmokingRecord:
-    status: str = "unknown"          # current | former | never | unknown
-    ppd: Optional[float] = None      # packs per day
-    pack_years: Optional[float] = None
-    cigarettes_per_day: Optional[float] = None
-    temporal: Optional[str] = None
+class Relation:
+    """A linked entity-value pair for a single risk factor mention."""
+    factor: str                         # e.g., "smoking"
+    raw_text: str                       # source sentence
+    status: Optional[str] = None       # "current", "former", "never"
+    value: Optional[float] = None      # numeric quantity
+    unit: Optional[str] = None         # unit of measurement
+    value2: Optional[float] = None     # for ranges: "4-5 hours" → value=4, value2=5
+    substance: Optional[str] = None    # for drug_use
+    condition: Optional[str] = None    # for sleep: OSA, insomnia, etc.
+    temporal: Optional[str] = None     # "for 30 years", "since 2018", "quit 2019"
+    flags: List[str] = field(default_factory=list)  # for diet
+    confidence: float = 1.0
+    source_entities: List[str] = field(default_factory=list)
 
 
 @dataclass
-class AlcoholRecord:
-    status: str = "unknown"
-    drinks_per_day: Optional[float] = None
-    drinks_per_week: Optional[float] = None
-    pattern: Optional[str] = None    # social | heavy | binge | rare
-    temporal: Optional[str] = None
-
-
-@dataclass
-class BMIRecord:
-    status: str = "current"
-    value: Optional[float] = None    # numeric BMI
-    unit: str = "kg/m2"
-    bmi_class: Optional[str] = None  # underweight|normal|overweight|obese_I|II|III
-    weight: Optional[float] = None
-    weight_unit: Optional[str] = None
-
-
-@dataclass
-class PhysicalActivityRecord:
-    status: str = "current"
-    level: Optional[str] = None      # sedentary|low|moderate|high
-    days_per_week: Optional[int] = None
-    minutes_per_session: Optional[float] = None
-    activity_types: List[str] = field(default_factory=list)
-
-
-@dataclass
-class SleepRecord:
-    status: str = "current"
-    hours_per_night: Optional[float] = None
-    condition: Optional[str] = None  # OSA|insomnia|hypersomnia|none
-    osa_status: Optional[str] = None # suspected|confirmed
-    on_cpap: bool = False
-    snoring: bool = False
-
-
-@dataclass
-class DietRecord:
-    status: str = "current"
-    quality: Optional[str] = None    # poor|moderate|good
-    flags: List[str] = field(default_factory=list)
-
-
-@dataclass
-class DrugUseRecord:
-    status: str = "unknown"
-    substances: List[str] = field(default_factory=list)
-    route: Optional[str] = None      # oral|IV|smoked
-    temporal: Optional[str] = None
-
-
-@dataclass
-class NormalizedPatientProfile:
-    """Final structured output for a single patient note."""
+class RelationResult:
+    """All extracted relations from a single note."""
     note_id: str
-    smoking: SmokingRecord = field(default_factory=SmokingRecord)
-    alcohol: AlcoholRecord = field(default_factory=AlcoholRecord)
-    bmi: BMIRecord = field(default_factory=BMIRecord)
-    physical_activity: PhysicalActivityRecord = field(default_factory=PhysicalActivityRecord)
-    sleep: SleepRecord = field(default_factory=SleepRecord)
-    diet: DietRecord = field(default_factory=DietRecord)
-    drug_use: DrugUseRecord = field(default_factory=DrugUseRecord)
-    extraction_warnings: List[str] = field(default_factory=list)
+    relations: List[Relation] = field(default_factory=list)
+    sentences: List[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+    def by_factor(self, factor: str) -> List[Relation]:
+        return [r for r in self.relations if r.factor == factor]
 
 
 # ─────────────────────────────────────────────
-# Normalizer Class
+# Relation Extractor
 # ─────────────────────────────────────────────
 
-class Normalizer:
+class RelationExtractor:
     """
-    Normalizes a RelationResult into a NormalizedPatientProfile.
+    Extracts structured relations from NER entities grouped by sentence.
 
-    For each risk factor, consolidates multiple Relations (one per
-    sentence) into a single canonical record using priority rules.
+    For each risk factor found in a sentence, it:
+      1. Determines status (current / former / never)
+      2. Extracts quantities and units
+      3. Extracts temporal expressions
+      4. Extracts substance type (for drug use)
+      5. Builds a Relation object
     """
 
-    def normalize(self, rel_result: RelationResult) -> NormalizedPatientProfile:
+    # Status patterns (shared across factors)
+    STATUS_PATTERNS = {
+        "never": re.compile(
+            r'\b(never|denies?|no\s+history\s+of|non[-\s]?smoker|nonsmoker|drug[-\s]free|abstain|teetotal)\b', re.I
+        ),
+        "former": re.compile(
+            r'\b(former|ex[-\s]?|quit|stopped|ceased|used\s+to|previously|in\s+recovery|sober|sobriety)\b', re.I
+        ),
+    }
+
+    # Temporal extraction
+    TEMPORAL_PATTERN = re.compile(
+        r'\b(for\s+(?:the\s+)?(?:past\s+)?\d+\s+years?|since\s+\d{4}|quit\s+in\s+\d{4}|'
+        r'quit\s+\d+\s+years?\s+ago|\d+[-\s]year\s+history)\b', re.I
+    )
+
+    # Numeric value extractor (handles "1.5", "3", "4-5")
+    NUMERIC_RANGE = re.compile(r'(\d+\.?\d*)\s*[-–to]+\s*(\d+\.?\d*)')
+    NUMERIC_SINGLE = re.compile(r'(\d+\.?\d*)')
+
+    def extract(self, note_id: str, ner_result: NERResult) -> RelationResult:
         """
-        Convert relations into a structured patient profile.
+        Extract relations from NER results.
 
         Args:
-            rel_result: Output from RelationExtractor
+            note_id: Note identifier
+            ner_result: Output of the NER extractor
 
         Returns:
-            NormalizedPatientProfile — ready for risk scoring or API output
+            RelationResult with structured Relation objects
         """
-        profile = NormalizedPatientProfile(note_id=rel_result.note_id)
+        # Collect unique sentences from entities
+        all_sentences = list(dict.fromkeys(e.sentence for e in ner_result.entities))
+        result = RelationResult(note_id=note_id, sentences=all_sentences)
 
-        profile.smoking = self._normalize_smoking(rel_result.by_factor("smoking"))
-        profile.alcohol = self._normalize_alcohol(rel_result.by_factor("alcohol"))
-        profile.bmi = self._normalize_bmi(rel_result.by_factor("bmi"), raw_sentences=rel_result.sentences)
-        profile.physical_activity = self._normalize_activity(rel_result.by_factor("physical_activity"))
-        profile.sleep = self._normalize_sleep(rel_result.by_factor("sleep"))
-        profile.diet = self._normalize_diet(rel_result.by_factor("diet"))
-        profile.drug_use = self._normalize_drug_use(rel_result.by_factor("drug_use"))
+        # Group entities by sentence
+        sentence_groups = self._group_by_sentence(ner_result.entities)
 
-        logger.info(f"[{rel_result.note_id}] Normalized profile created")
-        return profile
+        for sentence, entities in sentence_groups.items():
+            # Group entities by factor within the sentence
+            factor_groups = self._group_by_factor(entities)
+            for factor, factor_entities in factor_groups.items():
+                relation = self._build_relation(factor, sentence, factor_entities)
+                if relation:
+                    result.relations.append(relation)
 
-    # ── Factor Normalizers ────────────────────────
+        logger.debug(f"[{note_id}] RelationExtractor: {len(result.relations)} relations")
+        return result
 
-    def _normalize_smoking(self, relations: List[Relation]) -> SmokingRecord:
-        rec = SmokingRecord()
-        if not relations:
-            return rec
+    # ── Private Methods ──────────────────────────
 
-        # Status: "never" > "former" > "current"
-        rec.status = self._consolidate_status([r.status for r in relations])
+    def _group_by_sentence(self, entities: List[Entity]) -> Dict[str, List[Entity]]:
+        groups: Dict[str, List[Entity]] = {}
+        for e in entities:
+            groups.setdefault(e.sentence, []).append(e)
+        return groups
 
-        for r in relations:
-            if r.unit == "ppd" and r.value is not None:
-                rec.ppd = r.value
-            if r.unit == "cigarettes/day" and r.value is not None:
-                rec.cigarettes_per_day = r.value
-                rec.ppd = rec.ppd or round(r.value / 20, 2)
-            if r.temporal:
-                rec.temporal = r.temporal
-            # Extract pack_years from flags like "pack_years:45"
-            for flag in r.flags:
-                if flag.startswith("pack_years:"):
-                    try:
-                        rec.pack_years = float(flag.split(":")[1])
-                    except ValueError:
-                        pass
+    def _group_by_factor(self, entities: List[Entity]) -> Dict[str, List[Entity]]:
+        groups: Dict[str, List[Entity]] = {}
+        for e in entities:
+            groups.setdefault(e.label, []).append(e)
+        return groups
 
-        return rec
+    def _build_relation(self, factor: str, sentence: str, entities: List[Entity]) -> Optional[Relation]:
+        """Dispatch to factor-specific relation builder."""
+        builders = {
+            "smoking": self._build_smoking,
+            "alcohol": self._build_alcohol,
+            "bmi": self._build_bmi,
+            "physical_activity": self._build_activity,
+            "sleep": self._build_sleep,
+            "diet": self._build_diet,
+            "drug_use": self._build_drug_use,
+        }
+        builder = builders.get(factor)
+        if builder:
+            return builder(sentence, entities)
+        return None
 
-    def _normalize_alcohol(self, relations: List[Relation]) -> AlcoholRecord:
-        rec = AlcoholRecord()
-        if not relations:
-            return rec
+    def _determine_status(self, sentence: str, entities: List[Entity]) -> str:
+        """Determine current/former/never status from sentence context."""
+        sub_labels = {e.sub_label for e in entities}
 
-        rec.status = self._consolidate_status([r.status for r in relations])
+        # Check entity sub-labels first (most precise)
+        for sub in sub_labels:
+            if "never" in sub:
+                return "never"
+            if "former" in sub:
+                return "former"
+            if "current" in sub:
+                return "current"
 
-        for r in relations:
-            if r.value is not None:
-                if r.unit == "drinks/day":
-                    rec.drinks_per_day = r.value
-                    rec.drinks_per_week = rec.drinks_per_week or round(r.value * 7, 1)
-                elif r.unit == "drinks/week":
-                    rec.drinks_per_week = r.value
-                    rec.drinks_per_day = rec.drinks_per_day or round(r.value / 7, 2)
-
-            if "social_drinker" in r.flags:
-                rec.pattern = "social"
-            if "heavy_use" in r.flags:
-                rec.pattern = "heavy"
-            if r.temporal:
-                rec.temporal = r.temporal
-
-        # Infer pattern from quantity if not explicitly stated
-        if rec.pattern is None and rec.drinks_per_week is not None:
-            if rec.drinks_per_week <= 1:
-                rec.pattern = "rare"
-            elif rec.drinks_per_week <= 7:
-                rec.pattern = "moderate"
-            elif rec.drinks_per_week <= 14:
-                rec.pattern = "heavy"
-            else:
-                rec.pattern = "very_heavy"
-
-        return rec
-
-    def _normalize_bmi(self, relations: List[Relation], raw_sentences: List[str] = None) -> BMIRecord:
-        rec = BMIRecord()
-
-        # Step 1: Try to get explicit BMI value from NER relations
-        for r in relations:
-            if r.unit == "kg/m2" and r.value is not None:
-                rec.value = r.value
-                rec.bmi_class = r.condition or self._classify_bmi(r.value)
-            elif r.unit in ("lbs", "kg") and r.value is not None:
-                rec.weight = r.value
-                rec.weight_unit = r.unit
-
-            # Pick up class from flags
-            for flag in r.flags:
-                if flag in ("obese_I", "obese_II", "obese_III", "overweight", "underweight", "normal"):
-                    rec.bmi_class = rec.bmi_class or flag
-
-        # Step 2: If no explicit BMI found, compute from height+weight in raw text
-        if rec.value is None and raw_sentences:
-            bmi_extraction = _bmi_calc.extract_from_sentences(raw_sentences)
-            if bmi_extraction and bmi_extraction.bmi:
-                rec.value = bmi_extraction.bmi
-                rec.bmi_class = bmi_extraction.bmi_class
-                rec.weight = bmi_extraction.weight_lbs
-                rec.weight_unit = "lbs"
-                rec.unit = "kg/m2"
-                computed = bmi_extraction.computed_from
-                logger.debug(f"BMI computed from height/weight: {rec.value} ({rec.bmi_class}) [{computed}]")
-
-        return rec
-
-    def _normalize_activity(self, relations: List[Relation]) -> PhysicalActivityRecord:
-        rec = PhysicalActivityRecord()
-        if not relations:
-            return rec
-
-        for r in relations:
-            if r.condition:
-                rec.level = r.condition
-            if r.value and r.unit == "min/session":
-                rec.minutes_per_session = r.value
-            for flag in r.flags:
-                if flag == "sedentary":
-                    rec.level = "sedentary"
-                elif flag.startswith("days_per_week:"):
-                    try:
-                        rec.days_per_week = int(flag.split(":")[1])
-                    except ValueError:
-                        pass
-                elif flag.startswith("type:"):
-                    activity = flag.split(":")[1]
-                    if activity not in rec.activity_types:
-                        rec.activity_types.append(activity)
-                elif flag.startswith("miles:"):
-                    rec.activity_types.append(f"running_{flag.split(':')[1]}mi")
-
-        # Infer level from days/week if not set
-        if rec.level is None and rec.days_per_week is not None:
-            if rec.days_per_week == 0:
-                rec.level = "sedentary"
-            elif rec.days_per_week <= 2:
-                rec.level = "low"
-            elif rec.days_per_week <= 4:
-                rec.level = "moderate"
-            else:
-                rec.level = "high"
-
-        return rec
-
-    def _normalize_sleep(self, relations: List[Relation]) -> SleepRecord:
-        rec = SleepRecord()
-        if not relations:
-            return rec
-
-        for r in relations:
-            # Average range values (e.g., 4-5 hours → 4.5)
-            if r.value is not None:
-                if r.value2 is not None:
-                    rec.hours_per_night = round((r.value + r.value2) / 2, 1)
-                else:
-                    rec.hours_per_night = r.value
-
-            if r.condition:
-                rec.condition = r.condition
-
-            for flag in r.flags:
-                if "osa_suspected" in flag or "osa_likely" in flag or "osa_probable" in flag:
-                    rec.osa_status = "suspected"
-                elif "osa_confirmed" in flag or "osa_diagnosed" in flag:
-                    rec.osa_status = "confirmed"
-                if "cpap" in flag:
-                    rec.on_cpap = True
-                if "snoring" in flag:
-                    rec.snoring = True
-
-        return rec
-
-    def _normalize_diet(self, relations: List[Relation]) -> DietRecord:
-        rec = DietRecord()
-        if not relations:
-            return rec
-
-        all_flags = []
-        quality_votes = {"poor": 0, "moderate": 0, "good": 0}
-
-        for r in relations:
-            if r.condition in quality_votes:
-                quality_votes[r.condition] += 1
-            all_flags.extend(r.flags)
-
-        rec.quality = max(quality_votes, key=quality_votes.get)
-        # Deduplicate and clean flags
-        rec.flags = list(dict.fromkeys(all_flags))  # preserves order, removes dups
-
-        return rec
-
-    def _normalize_drug_use(self, relations: List[Relation]) -> DrugUseRecord:
-        rec = DrugUseRecord()
-        if not relations:
-            return rec
-
-        rec.status = self._consolidate_status([r.status for r in relations])
-
-        substances = []
-        for r in relations:
-            if r.substance:
-                for sub in r.substance.split(", "):
-                    if sub and sub not in substances:
-                        substances.append(sub)
-            if "IVDU" in substances:
-                rec.route = "IV"
-            if r.temporal:
-                rec.temporal = r.temporal
-
-        rec.substances = substances
-        return rec
-
-    # ── Helpers ───────────────────────────────────
-
-    def _consolidate_status(self, statuses: List[Optional[str]]) -> str:
-        """
-        Resolve conflicting statuses using clinical priority:
-        "never" > "former" > "current" > "unknown"
-        """
-        statuses = [s for s in statuses if s]
-        if "never" in statuses:
+        # Fall back to sentence-level pattern matching
+        if self.STATUS_PATTERNS["never"].search(sentence):
             return "never"
-        if "former" in statuses:
+        if self.STATUS_PATTERNS["former"].search(sentence):
             return "former"
-        if "current" in statuses:
-            return "current"
-        return "unknown"
+        return "current"
+
+    def _extract_temporal(self, sentence: str) -> Optional[str]:
+        m = self.TEMPORAL_PATTERN.search(sentence)
+        return m.group(0) if m else None
+
+    def _extract_numeric(self, text: str) -> Tuple[Optional[float], Optional[float]]:
+        """Extract single value or range. Returns (value, value2)."""
+        range_match = self.NUMERIC_RANGE.search(text)
+        if range_match:
+            return float(range_match.group(1)), float(range_match.group(2))
+        single_match = self.NUMERIC_SINGLE.search(text)
+        if single_match:
+            return float(single_match.group(1)), None
+        return None, None
+
+    # ── Factor-Specific Builders ─────────────────
+
+    def _build_smoking(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="smoking",
+            raw_text=sentence,
+            status=self._determine_status(sentence, entities),
+            temporal=self._extract_temporal(sentence),
+            source_entities=[e.sub_label for e in entities],
+        )
+        for e in entities:
+            if e.sub_label == "smoking_ppd":
+                rel.value, _ = self._extract_numeric(e.text)
+                rel.unit = "ppd"
+            elif e.sub_label == "smoking_pack_years":
+                m = self.NUMERIC_SINGLE.search(e.text)
+                if m:
+                    rel.flags.append(f"pack_years:{m.group(1)}")
+            elif e.sub_label == "smoking_cigarettes_day":
+                rel.value, _ = self._extract_numeric(e.text)
+                rel.unit = "cigarettes/day"
+                if rel.value:
+                    rel.flags.append(f"ppd_approx:{round(rel.value/20, 2)}")
+        return rel
+
+    def _build_alcohol(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="alcohol",
+            raw_text=sentence,
+            status=self._determine_status(sentence, entities),
+            temporal=self._extract_temporal(sentence),
+            source_entities=[e.sub_label for e in entities],
+        )
+        for e in entities:
+            if e.sub_label == "alcohol_quantity":
+                rel.value, _ = self._extract_numeric(e.text)
+                # Determine unit from text
+                if re.search(r'(per|a|/)\s*week|weekly', e.text, re.I):
+                    rel.unit = "drinks/week"
+                elif re.search(r'(per|a|/)\s*(day|night)|nightly|daily', e.text, re.I):
+                    rel.unit = "drinks/day"
+            elif e.sub_label == "alcohol_social":
+                rel.flags.append("social_drinker")
+            elif e.sub_label == "alcohol_heavy":
+                rel.flags.append("heavy_use")
+        return rel
+
+    def _build_bmi(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="bmi",
+            raw_text=sentence,
+            status="current",
+            source_entities=[e.sub_label for e in entities],
+        )
+        for e in entities:
+            if e.sub_label == "bmi_value":
+                rel.value, _ = self._extract_numeric(e.text)
+                rel.unit = "kg/m2"
+                if rel.value:
+                    rel.condition = self._classify_bmi(rel.value)
+            elif e.sub_label == "bmi_class":
+                # Extract class from text if no numeric value yet
+                text_lower = e.text.lower()
+                if "morbidly obese" in text_lower or "class iii" in text_lower or "class 3" in text_lower:
+                    rel.flags.append("obese_III")
+                elif "class ii" in text_lower or "class 2" in text_lower:
+                    rel.flags.append("obese_II")
+                elif "class i" in text_lower or "class 1" in text_lower:
+                    rel.flags.append("obese_I")
+                elif "overweight" in text_lower:
+                    rel.flags.append("overweight")
+                elif "underweight" in text_lower:
+                    rel.flags.append("underweight")
+            elif e.sub_label == "bmi_weight":
+                rel.value, _ = self._extract_numeric(e.text)
+                if re.search(r'(lbs?|pounds?)', e.text, re.I):
+                    rel.unit = "lbs"
+                elif re.search(r'(kg|kilograms?)', e.text, re.I):
+                    rel.unit = "kg"
+        return rel
 
     def _classify_bmi(self, bmi: float) -> str:
         if bmi < 18.5:
@@ -372,19 +277,128 @@ class Normalizer:
         else:
             return "obese_III"
 
+    def _build_activity(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="physical_activity",
+            raw_text=sentence,
+            status="current",
+            source_entities=[e.sub_label for e in entities],
+        )
+        for e in entities:
+            if e.sub_label == "activity_sedentary":
+                rel.condition = "sedentary"
+                rel.flags.append("sedentary")
+            elif e.sub_label == "activity_active":
+                rel.condition = "active"
+            elif e.sub_label == "activity_frequency":
+                val, _ = self._extract_numeric(e.text)
+                if val:
+                    rel.flags.append(f"days_per_week:{int(val)}")
+            elif e.sub_label == "activity_duration":
+                val, _ = self._extract_numeric(e.text)
+                if val:
+                    rel.value = val
+                    rel.unit = "min/session"
+            elif e.sub_label == "activity_distance":
+                val, _ = self._extract_numeric(e.text)
+                if val:
+                    rel.flags.append(f"miles:{val}")
+            elif e.sub_label == "activity_type":
+                rel.flags.append(f"type:{e.text.lower()}")
+        return rel
+
+    def _build_sleep(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="sleep",
+            raw_text=sentence,
+            status="current",
+            source_entities=[e.sub_label for e in entities],
+        )
+        for e in entities:
+            if e.sub_label == "sleep_hours":
+                val, val2 = self._extract_numeric(e.text)
+                rel.value = val
+                rel.value2 = val2
+                rel.unit = "hours/night"
+                if val and val2:
+                    rel.flags.append(f"avg_hours:{round((val+val2)/2, 1)}")
+            elif e.sub_label in ("sleep_apnea", "sleep_osa_status"):
+                rel.condition = "OSA"
+                osa_status = re.search(r'(suspected|likely|probable|confirmed|diagnosed)', sentence, re.I)
+                if osa_status:
+                    rel.flags.append(f"osa_{osa_status.group(1).lower()}")
+            elif e.sub_label == "sleep_insomnia":
+                rel.condition = "insomnia"
+            elif e.sub_label == "sleep_cpap":
+                rel.flags.append("cpap_user")
+            elif e.sub_label == "sleep_snoring":
+                rel.flags.append("snoring")
+        return rel
+
+    def _build_diet(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="diet",
+            raw_text=sentence,
+            status="current",
+            source_entities=[e.sub_label for e in entities],
+        )
+        quality_votes = {"poor": 0, "moderate": 0, "good": 0}
+
+        for e in entities:
+            if e.sub_label == "diet_quality_poor":
+                quality_votes["poor"] += 1
+                rel.flags.append(e.text.lower().replace(" ", "_"))
+            elif e.sub_label == "diet_quality_good":
+                quality_votes["good"] += 1
+            elif e.sub_label == "diet_sodium":
+                rel.flags.append("high_sodium" if "high" in e.text.lower() else "low_sodium")
+            elif e.sub_label == "diet_macro":
+                rel.flags.append(e.text.lower().replace(" ", "_"))
+            elif e.sub_label == "diet_type":
+                rel.flags.append(e.text.lower())
+            elif e.sub_label == "diet_therapeutic":
+                rel.flags.append(e.text.lower().replace(" ", "_"))
+            elif e.sub_label == "diet_behavior":
+                rel.flags.append(e.text.lower().replace(" ", "_"))
+
+        rel.condition = max(quality_votes, key=quality_votes.get)
+        return rel
+
+    def _build_drug_use(self, sentence: str, entities: List[Entity]) -> Relation:
+        rel = Relation(
+            factor="drug_use",
+            raw_text=sentence,
+            status=self._determine_status(sentence, entities),
+            temporal=self._extract_temporal(sentence),
+            source_entities=[e.sub_label for e in entities],
+        )
+        substance_map = {
+            "drug_marijuana": "marijuana",
+            "drug_cocaine": "cocaine",
+            "drug_opioid": "opioid/heroin",
+            "drug_stimulant": "methamphetamine",
+            "drug_ivdu": "IVDU",
+        }
+        substances = []
+        for e in entities:
+            sub = substance_map.get(e.sub_label)
+            if sub and sub not in substances:
+                substances.append(sub)
+        rel.substance = ", ".join(substances) if substances else None
+        return rel
+
 
 # ─────────────────────────────────────────────
 # Quick self-test
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys, json
+    import sys
     sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
     logging.basicConfig(level=logging.INFO)
 
     from modules.preprocessor import ClinicalPreprocessor
     from modules.ner_extractor import NERExtractor
-    from modules.relation_extractor import RelationExtractor
 
     text = """Patient smokes 1.5 packs per day for the past 30 years.
 Drinks 3 beers nightly.
@@ -403,9 +417,20 @@ Denies illicit drug use."""
     rel_extractor = RelationExtractor()
     rel_result = rel_extractor.extract("TEST_001", ner_result)
 
-    normalizer = Normalizer()
-    profile = normalizer.normalize(rel_result)
-
     print("=" * 60)
-    print("NORMALIZED PATIENT PROFILE")
-    print(json.dumps(profile.to_dict(), indent=2))
+    print(f"Note: {rel_result.note_id}")
+    print(f"Relations found: {len(rel_result.relations)}")
+    for r in rel_result.relations:
+        print(f"\n  [{r.factor.upper()}]")
+        print(f"    Status  : {r.status}")
+        print(f"    Value   : {r.value} {r.unit or ''}")
+        if r.value2:
+            print(f"    Value2  : {r.value2}")
+        if r.condition:
+            print(f"    Condition: {r.condition}")
+        if r.substance:
+            print(f"    Substance: {r.substance}")
+        if r.temporal:
+            print(f"    Temporal: {r.temporal}")
+        if r.flags:
+            print(f"    Flags   : {r.flags}")
