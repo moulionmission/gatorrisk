@@ -139,20 +139,27 @@ class BMICalculator:
             result.computed_from = "height_weight"
             result.weight_raw = f"{weight_lbs} lbs"
             result.height_raw = f"{height_inches} inches"
+            if bmi:
+                result.bmi = bmi
+                result.bmi_class = self._classify_bmi(bmi)
         else:
-            # Estimate using default height — flag as estimated
-            bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
+            # Weight only — only classify if extreme enough to be unambiguous
             result.computed_from = "weight_only_estimated"
             result.weight_raw = f"{weight_lbs} lbs"
-            logger.debug(f"BMI estimated from weight only ({weight_lbs} lbs) — height not found")
-
-        if bmi:
-            result.bmi = bmi
-            result.bmi_class = self._classify_bmi(bmi)
-            logger.debug(
-                f"BMI computed: {bmi} ({result.bmi_class}) "
-                f"from weight={weight_lbs}lbs height={height_inches or self.DEFAULT_HEIGHT_INCHES}in"
-            )
+            if weight_lbs >= 280:
+                result.bmi_class = "obese_III" if weight_lbs >= 350 else "obese_II"
+                result.bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
+            elif weight_lbs >= 220:
+                result.bmi_class = "obese_I"
+                result.bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
+            elif weight_lbs <= 100:
+                result.bmi_class = "underweight"
+                result.bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
+            else:
+                # Ambiguous weight range — report weight but no BMI class
+                result.bmi = None
+                result.bmi_class = None
+            logger.debug(f"Weight only: {weight_lbs} lbs → class={result.bmi_class}")
 
         return result
 
@@ -193,12 +200,27 @@ class BMICalculator:
         if height_inches:
             result.bmi = self._compute_bmi(weight_lbs, height_inches)
             result.computed_from = "height_weight"
+            if result.bmi:
+                result.bmi_class = self._classify_bmi(result.bmi)
         else:
-            result.bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
+            # Weight only — compute estimated BMI but only classify if clearly obese or underweight
+            # A 300lb person is obese regardless of height. A 120lb person is not necessarily underweight.
+            # Only commit to a class when weight alone is unambiguous.
+            estimated_bmi = self._compute_bmi(weight_lbs, self.DEFAULT_HEIGHT_INCHES)
+            result.bmi = estimated_bmi
             result.computed_from = "weight_only_estimated"
-
-        if result.bmi:
-            result.bmi_class = self._classify_bmi(result.bmi)
+            if estimated_bmi:
+                # Only assign class if the weight is extreme enough to be unambiguous
+                if weight_lbs >= 280:
+                    result.bmi_class = "obese_III" if weight_lbs >= 350 else "obese_II"
+                elif weight_lbs >= 220:
+                    result.bmi_class = "obese_I"
+                elif weight_lbs <= 100:
+                    result.bmi_class = "underweight"
+                else:
+                    # Ambiguous — don't guess the class, just report weight
+                    result.bmi_class = None
+                    result.bmi = None  # don't report unreliable BMI number
 
         return result
 
