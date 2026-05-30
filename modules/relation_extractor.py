@@ -192,6 +192,24 @@ class RelationExtractor:
             temporal=self._extract_temporal(sentence),
             source_entities=[e.sub_label for e in entities],
         )
+
+        # Refine status from sub_labels
+        sub_labels = {e.sub_label for e in entities}
+        if "smoking_never" in sub_labels:
+            rel.status = "never"
+        elif "smoking_former" in sub_labels:
+            rel.status = "former"
+        elif "smoking_current" in sub_labels:
+            rel.status = "current"
+        elif "smoking_history" in sub_labels:
+            # "history of smoking" — ambiguous. Check if quit/former context exists
+            if self.STATUS_PATTERNS["former"].search(sentence):
+                rel.status = "former"
+            elif re.search(r'(no\s+longer|quit|stopped|cessation)', sentence, re.I):
+                rel.status = "former"
+            else:
+                rel.status = "current"  # still smoking unless told otherwise
+
         for e in entities:
             if e.sub_label == "smoking_ppd":
                 rel.value, _ = self._extract_numeric(e.text)
@@ -208,21 +226,56 @@ class RelationExtractor:
         return rel
 
     def _build_alcohol(self, sentence: str, entities: List[Entity]) -> Relation:
+        sub_labels = {e.sub_label for e in entities}
+
+        # Determine status from sub_labels directly
+        if "alcohol_never" in sub_labels:
+            status = "never"
+        elif "alcohol_former" in sub_labels:
+            status = "former"
+        elif any(s in sub_labels for s in ("alcohol_quantity", "alcohol_quantity_words",
+                                            "alcohol_quantity_rare", "alcohol_social",
+                                            "alcohol_heavy", "alcohol_trigger")):
+            status = "current"
+        else:
+            status = self._determine_status(sentence, entities)
+
         rel = Relation(
             factor="alcohol",
             raw_text=sentence,
-            status=self._determine_status(sentence, entities),
+            status=status,
             temporal=self._extract_temporal(sentence),
             source_entities=[e.sub_label for e in entities],
         )
+
         for e in entities:
-            if e.sub_label == "alcohol_quantity":
-                rel.value, _ = self._extract_numeric(e.text)
-                # Determine unit from text
-                if re.search(r'(per|a|/)\s*week|weekly', e.text, re.I):
+            if e.sub_label in ("alcohol_quantity", "alcohol_quantity_words"):
+                val, _ = self._extract_numeric(e.text)
+                if val is None:
+                    # word-based: one=1, two=2, etc
+                    word_map = {"one":1,"two":2,"three":3,"four":4,"five":5,"six":6}
+                    for word, num in word_map.items():
+                        if word in e.text.lower():
+                            val = float(num)
+                            break
+                rel.value = val
+                if re.search(r'(per|a|/)\s*week|weekly|a\s+month|per\s+month', e.text, re.I):
                     rel.unit = "drinks/week"
-                elif re.search(r'(per|a|/)\s*(day|night)|nightly|daily', e.text, re.I):
+                    # convert monthly to weekly
+                    if re.search(r'month', e.text, re.I) and rel.value:
+                        rel.value = round(rel.value / 4, 2)
+                        rel.unit = "drinks/week"
+                elif re.search(r'year', e.text, re.I) and rel.value:
+                    rel.value = round(rel.value / 52, 2)
+                    rel.unit = "drinks/week"
+                else:
                     rel.unit = "drinks/day"
+            elif e.sub_label == "alcohol_quantity_rare":
+                rel.value, _ = self._extract_numeric(e.text)
+                rel.unit = "drinks/week"
+                if rel.value:
+                    rel.value = round(rel.value / 52, 2)  # per year → per week
+                rel.flags.append("rare_drinker")
             elif e.sub_label == "alcohol_social":
                 rel.flags.append("social_drinker")
             elif e.sub_label == "alcohol_heavy":
