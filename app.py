@@ -217,15 +217,19 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
         key="note_input_area",
 )
 
+
+
     run_btn = st.button("🔍 Extract Risk Factors", type="primary", use_container_width=True)
 
     if run_btn:
-        if not note_text.strip():
+        # Read directly from the widget value, not the variable
+        actual_text = st.session_state.get("note_input_area", note_text)
+        if not actual_text.strip():
             st.warning("Please paste a clinical note or select a sample.")
         else:
             with st.spinner("Running GatorRisk pipeline..."):
-                result = pipeline.run_note(note_id="STREAMLIT_001", text=note_text)
-
+                result = pipeline.run_note(note_id="STREAMLIT_001", text=actual_text)
+                
             profile = result.normalized_profile
             risk    = result.risk_profile
 
