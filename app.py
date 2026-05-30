@@ -353,12 +353,35 @@ with tab2:
     if uploaded:
         df_up = pd.read_csv(uploaded)
         st.success(f"Loaded {len(df_up)} rows")
-        st.dataframe(df_up.head(3), use_container_width=True)
 
-        if "transcription" in df_up.columns:
+        # Auto-rename transcription → text (handles MTSamples directly)
+        if "transcription" in df_up.columns and "text" not in df_up.columns:
             df_up = df_up.rename(columns={"transcription": "text"})
+            st.info("Auto-detected MTSamples format — renamed 'transcription' column to 'text'")
+
         if "text" not in df_up.columns:
-            st.error("CSV must have a `text` or `transcription` column with the note content.")
+            st.error("CSV must have a 'text' or 'transcription' column.")
+        else:
+            # Auto-filter to notes that contain social history keywords
+            social_keywords = (
+                "social history|smok|alcohol|bmi|exercise|"
+                "sleep|drug use|tobacco|drinks|sedentary|obesity"
+            )
+            before = len(df_up)
+            mask = df_up["text"].str.contains(social_keywords, case=False, na=False)
+            df_up = df_up[mask].reset_index(drop=True)
+            after = len(df_up)
+
+            if before != after:
+                st.info(
+                    f"🔍 Auto-filtered: {before} total notes → "
+                    f"**{after} notes with lifestyle content** "
+                    f"({before - after} notes skipped — no social history found)"
+                )
+            else:
+                st.info(f"All {after} notes contain lifestyle content — no filtering needed")
+
+            st.dataframe(df_up.head(3), use_container_width=True)
         else:
             limit = st.slider("Max notes to process", 5, len(df_up), min(200, len(df_up)))
 
