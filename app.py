@@ -472,7 +472,7 @@ with tab3:
         """)
 
     with col2:
-        st.markdown("""
+        st.markdown("")
         #### Architecture
 # ─────────────────────────────────────────────
 # Footer
