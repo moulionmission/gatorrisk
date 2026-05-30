@@ -15,6 +15,13 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Fuzzy matching — import lazily so missing rapidfuzz doesn't break anything
+try:
+    from modules.fuzzy_matcher import correct_sentences, fuzzy_available
+    _FUZZY_ENABLED = fuzzy_available()
+except ImportError:
+    _FUZZY_ENABLED = False
+
 
 # ─────────────────────────────────────────────
 # Data Structures
@@ -29,6 +36,7 @@ class ProcessedNote:
     sentences: List[str]
     deidentified: bool
     metadata: dict = field(default_factory=dict)
+    fuzzy_corrections: list = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────
@@ -85,10 +93,11 @@ class ClinicalPreprocessor:
         processed = preprocessor.process(note_id="N001", text="Patient smokes 2 ppd...")
     """
 
-    def __init__(self, deidentify: bool = True, min_sentence_length: int = 5):
+    def __init__(self, deidentify: bool = True, min_sentence_length: int = 5, fuzzy_correct: bool = True):
         self.deidentify = deidentify
         self.min_sentence_length = min_sentence_length
-        logger.info(f"ClinicalPreprocessor initialized | deidentify={deidentify}")
+        self.fuzzy_correct = fuzzy_correct and _FUZZY_ENABLED
+        logger.info(f"ClinicalPreprocessor initialized | deidentify={deidentify} | fuzzy={self.fuzzy_correct}")
 
     # ── Public API ──────────────────────────────
 
@@ -120,6 +129,15 @@ class ClinicalPreprocessor:
         # Step 4: Filter noise
         sentences = self._filter_sentences(sentences)
 
+        # Step 5: Fuzzy spelling correction (catches typos like "smokss" → "smokes")
+        fuzzy_corrections = []
+        if self.fuzzy_correct:
+            sentences, fuzzy_corrections = correct_sentences(sentences)
+            if fuzzy_corrections:
+                logger.debug(f"[{note_id}] Fuzzy corrections: {len(fuzzy_corrections)}")
+                for c in fuzzy_corrections:
+                    logger.debug(f"  '{c['original']}' → '{c['corrected']}' [{c['factor']}] ({c['similarity']}%)")
+
         return ProcessedNote(
             note_id=note_id,
             original_text=original,
@@ -127,6 +145,7 @@ class ClinicalPreprocessor:
             sentences=sentences,
             deidentified=self.deidentify,
             metadata=metadata or {},
+            fuzzy_corrections=fuzzy_corrections,
         )
 
     def process_batch(self, notes: List[dict]) -> List[ProcessedNote]:
