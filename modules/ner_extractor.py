@@ -83,10 +83,10 @@ class RuleBasedExtractor:
             (re.compile(r'(\d+\.?\d*)\s*pack[-\s]?year[s]?', re.I), "smoking_pack_years"),
             (re.compile(r'(\d+)\s*cigarette[s]?\s*(per|a)\s*day', re.I), "smoking_cigarettes_day"),
             # Former / quit patterns — expanded
-            (re.compile(r'\b(former\s+smoker|ex[-\s]smoker|quit\s+smoking|stopped\s+smoking)\b', re.I), "smoking_former"),
+            (re.compile(r'\b(former\s+smoker|ex[-\s]smoker|stopped\s+smoking)\b', re.I), "smoking_former"),
             (re.compile(r'\b(history\s+of\s+tobacco\s+use|history\s+of\s+smoking)\b', re.I), "smoking_former"),
             (re.compile(r'\b(tobacco\s+use[,.]?\s*which\s+he\s+quit|tobacco\s+use[,.]?\s*which\s+she\s+quit)\b', re.I), "smoking_former"),
-            (re.compile(r'\b(quit\s+(?:at\s+(?:the\s+)?age|smoking|tobacco))\b', re.I), "smoking_former"),
+            (re.compile(r'\b(quit\s+(?:at\s+(?:the\s+)?age|tobacco))\b', re.I), "smoking_former"),
             (re.compile(r'\b(used\s+to\s+smoke|previously\s+smoked|no\s+longer\s+smokes?)\b', re.I), "smoking_former"),
             # Never patterns — expanded
             (re.compile(r'\b(never\s+smoked|non[-\s]smoker|nonsmoker|denies\s+smoking)\b', re.I), "smoking_never"),
