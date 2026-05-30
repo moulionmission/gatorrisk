@@ -201,7 +201,7 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
     default_text = samples[selected]
 
     if "note_input" not in st.session_state:
-    st.session_state.note_input = ""
+        st.session_state.note_input = ""
 
     if default_text and default_text != st.session_state.get("last_sample", ""):
         
