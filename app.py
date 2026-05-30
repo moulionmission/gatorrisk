@@ -355,8 +355,10 @@ with tab2:
         st.success(f"Loaded {len(df_up)} rows")
         st.dataframe(df_up.head(3), use_container_width=True)
 
+        if "transcription" in df_up.columns:
+            df_up = df_up.rename(columns={"transcription": "text"})
         if "text" not in df_up.columns:
-            st.error("CSV must have a `text` column with the note content.")
+            st.error("CSV must have a `text` or `transcription` column with the note content.")
         else:
             limit = st.slider("Max notes to process", 5, min(200, len(df_up)), 20)
 
