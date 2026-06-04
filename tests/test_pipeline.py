@@ -260,7 +260,7 @@ class TestRiskScorer:
     def test_heavy_smoker_high_risk(self, full_chain):
         _, risk = full_chain("T040", "Patient smokes 3 packs per day.")
         smoking_factor = next(f for f in risk.factors if f.factor == "smoking")
-        assert smoking_factor.score >= 0.75
+        assert smoking_factor.score >= 75
         assert smoking_factor.tier in ("HIGH", "CRITICAL")
 
     def test_never_smoker_low_risk(self, full_chain):
@@ -272,24 +272,24 @@ class TestRiskScorer:
     def test_morbid_obesity_critical(self, full_chain):
         _, risk = full_chain("T042", "BMI 42.5, morbidly obese.")
         bmi_factor = next(f for f in risk.factors if f.factor == "bmi")
-        assert bmi_factor.score == 1.0
+        assert bmi_factor.score == 80.0
         assert bmi_factor.tier == "CRITICAL"
 
     def test_normal_bmi_low_risk(self, full_chain):
         _, risk = full_chain("T043", "BMI 22.4, normal weight.")
         bmi_factor = next(f for f in risk.factors if f.factor == "bmi")
-        assert bmi_factor.score == 0.0
+        assert bmi_factor.score == 5.0
 
     def test_composite_score_range(self, full_chain):
         _, risk = full_chain("T044", "Smokes 2 ppd. BMI 38. Drinks 4 beers daily. Sedentary.")
-        assert 0.0 <= risk.composite_score <= 1.0
+        assert 0.0 <= risk.composite_score <= 100.0
 
     def test_healthy_patient_low_composite(self, full_chain):
         _, risk = full_chain("T045",
             "Non-smoker. BMI 21. Exercises 5 days per week, 45 minutes each. "
             "Sleeps 8 hours. Healthy diet. Denies alcohol and drug use."
         )
-        assert risk.composite_score < 0.30
+        assert risk.composite_score < 30.0
         assert risk.composite_tier in ("LOW", "MODERATE")
 
     def test_high_risk_patient_critical(self, full_chain):
@@ -298,7 +298,7 @@ class TestRiskScorer:
             "Drinks 6 beers nightly. Sedentary. Sleeps 3-4 hours. "
             "Poor diet, high sodium. Active heroin IVDU."
         )
-        assert risk.composite_score >= 0.60
+        assert risk.composite_score >= 60.0
         assert risk.composite_tier in ("HIGH", "CRITICAL")
 
     def test_score_has_disclaimer(self, full_chain):

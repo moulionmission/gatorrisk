@@ -227,7 +227,7 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
 
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number",
-                value=round(risk.composite_score * 100, 1),
+                value=round(risk.composite_score, 1),
                 number={"suffix": "%", "font": {"size": 36}},
                 gauge={
                     "axis": {"range": [0, 100], "tickwidth": 1},
@@ -241,7 +241,7 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
                     "threshold": {
                         "line": {"color": tier_color, "width": 4},
                         "thickness": 0.75,
-                        "value": risk.composite_score * 100,
+                        "value": risk.composite_score,
                     },
                 },
                 title={"text": f"<b>{risk.composite_tier}</b>", "font": {"size": 20, "color": tier_color}},
@@ -258,9 +258,9 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
             }
             colors = []
             for score in factor_data.values():
-                if score >= 0.75:   colors.append("#c62828")
-                elif score >= 0.50: colors.append("#f57c00")
-                elif score >= 0.25: colors.append("#fbc02d")
+                if score >= 75.0:   colors.append("#c62828")
+                elif score >= 50.0: colors.append("#f57c00")
+                elif score >= 25.0: colors.append("#fbc02d")
                 else:               colors.append("#2e7d32")
 
             fig_bar = go.Figure(go.Bar(
@@ -268,12 +268,12 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
                 y=list(factor_data.keys()),
                 orientation="h",
                 marker_color=colors,
-                text=[f"{v:.2f}" for v in factor_data.values()],
+                text=[f"{v:.1f}" for v in factor_data.values()],
                 textposition="outside",
             ))
             fig_bar.update_layout(
                 height=300,
-                xaxis=dict(range=[0, 1.1], title="Risk Score (0–1)"),
+                xaxis=dict(range=[0, 105], title="Risk Score (0–100)"),
                 margin=dict(t=10, b=10, l=10, r=40),
                 plot_bgcolor="white",
             )
@@ -304,7 +304,7 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
                     score = rf.score if rf else 0.0
                     tier_cls = f"risk-{tier}"
 
-                    with st.expander(f"{icon} {factor.replace('_',' ').title()}  —  score: {score:.2f}", expanded=True):
+                    with st.expander(f"{icon} {factor.replace('_',' ').title()}  —  score: {score:.1f}", expanded=True):
                         st.markdown(f'<span class="{tier_cls}">{tier}</span>', unsafe_allow_html=True)
                         if rf:
                             st.caption(rf.rationale)
@@ -415,7 +415,7 @@ with tab2:
                 for r in results:
                     rows.append({
                         "Note ID": r.note_id,
-                        "Risk Score": round(r.risk_profile.composite_score, 3),
+                        "Risk Score": round(r.risk_profile.composite_score, 1),
                         "Tier": r.risk_profile.composite_tier,
                         "Smoking": r.normalized_profile.smoking.status,
                         "BMI": r.normalized_profile.bmi.value,
@@ -462,7 +462,7 @@ with tab3:
         st.markdown("""
         #### What It Does
         GatorRisk reads unstructured clinical notes and automatically
-        extracts **7 lifestyle risk factors**, scoring each on a 0–1 risk scale.
+        extracts **7 lifestyle risk factors**, scoring each on a 0–100 risk scale.
 
         | Factor | Extracts |
         |---|---|
@@ -499,7 +499,7 @@ with tab3:
             structured output schema
               ↓
         [5] Risk Scorer
-            0–1 score + tier
+            0–100 score + tier
         ```
 
         #### Data Sources

@@ -17,7 +17,7 @@ Risk Tiers:
   LOW       (0–20):   Excellent/good health profile
   MODERATE  (21–40):  Some modifiable risk factors
   HIGH      (41–70):  Significant risk, intervention recommended
-  VERY_HIGH (71–100): Critical risk, urgent intervention needed
+  CRITICAL  (71–100): Critical risk, urgent intervention needed
 
 Usage:
     from modules.risk_scorer import RiskScorer, RiskProfile
@@ -45,7 +45,7 @@ class FactorRiskScore:
     """Risk assessment for a single lifestyle factor."""
     factor: str  # smoking, alcohol, bmi, physical_activity, sleep, diet, drug_use
     score: float  # 0–100
-    tier: str  # LOW | MODERATE | HIGH | VERY_HIGH
+    tier: str  # LOW | MODERATE | HIGH | CRITICAL
     explanation: str  # Human-readable summary
     contributing_factors: List[str] = field(default_factory=list)  # What drove the score
     recommendations: List[str] = field(default_factory=list)  # Action items
@@ -60,13 +60,14 @@ class RiskProfile:
     """Complete risk assessment for a patient note."""
     note_id: str
     composite_score: float = 0.0  # Weighted average of all factors, 0–100
-    composite_tier: str = "UNKNOWN"  # LOW | MODERATE | HIGH | VERY_HIGH
+    composite_tier: str = "UNKNOWN"  # LOW | MODERATE | HIGH | CRITICAL
     individual_scores: Dict[str, FactorRiskScore] = field(default_factory=dict)
     top_risk_factors: List[tuple] = field(default_factory=list)  # (factor, score) sorted
     protective_factors: List[tuple] = field(default_factory=list)  # (factor, score) sorted
     summary_statement: str = ""
     clinical_flags: List[str] = field(default_factory=list)  # Red flags for clinician
     estimated_mortality_risk: Optional[str] = None  # LOW|MODERATE|HIGH relative to population
+    disclaimer: str = "RESEARCH USE ONLY"
 
     @property
     def factors(self) -> List[FactorRiskScore]:
@@ -94,6 +95,7 @@ class RiskProfile:
             "summary_statement": self.summary_statement,
             "clinical_flags": self.clinical_flags,
             "estimated_mortality_risk": self.estimated_mortality_risk,
+            "disclaimer": self.disclaimer,
         }
 
     def summary(self) -> str:
@@ -970,7 +972,7 @@ class RiskScorer:
         elif score < 70:
             return "HIGH"
         else:
-            return "VERY_HIGH"
+            return "CRITICAL"
 
     def _classify_bmi(self, bmi: float) -> str:
         if bmi < 18.5:
@@ -1006,7 +1008,7 @@ class RiskScorer:
                 f"Significant health risk from multiple lifestyle factors ({top_factors}). "
                 f"Urgent, comprehensive intervention needed to prevent chronic disease."
             )
-        else:  # VERY_HIGH
+        else:  # CRITICAL
             return (
                 f"Critical health risk requiring immediate, intensive intervention. "
                 f"Refer for multidisciplinary care (primary care, cardiology, oncology, addiction, mental health as indicated)."
@@ -1058,7 +1060,7 @@ class RiskScorer:
         elif composite_score < 70:
             return "HIGH (1.5–3x population risk)"
         else:
-            return "VERY HIGH (3–5x+ population risk — urgent intervention)"
+            return "CRITICAL (3–5x+ population risk — urgent intervention)"
 
 
 # ─────────────────────────────────────────────

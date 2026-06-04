@@ -146,7 +146,7 @@ def extract_single(request: NoteRequest):
 
     Returns structured JSON with:
     - Normalized values per risk factor (smoking, alcohol, BMI, activity, sleep, diet, drugs)
-    - Risk scores (0.0–1.0) and tiers (LOW/MODERATE/HIGH/CRITICAL) per factor
+    - Risk scores (0–100) and tiers (LOW/MODERATE/HIGH/CRITICAL) per factor
     - Composite risk score and tier
     """
     if not request.text or len(request.text.strip()) < 10:

@@ -214,7 +214,7 @@ class RelationExtractor:
         elif "smoking_current" in sub_labels:
             rel.status = "current"
         # If we have explicit current signals (smokes/ppd/cigarettes), force current
-        elif any(s in sub_labels for s in ("smoking_trigger", "smoking_ppd", "smoking_cigarettes_day", "smoking_light", "smoking_vaping")):
+        elif rel.status not in ("never", "former") and any(s in sub_labels for s in ("smoking_trigger", "smoking_ppd", "smoking_cigarettes_day", "smoking_light", "smoking_vaping")):
             rel.status = "current"
         elif "smoking_history" in sub_labels:
             # "history of smoking" — ambiguous. Check if quit/former context exists
