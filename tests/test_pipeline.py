@@ -252,23 +252,45 @@ class TestNormalizationAndScoring:
 
     def test_pipeline_refinements(self, full_chain):
         # 1. Past-tense denies
-        profile, _ = full_chain("T_REF_1", "Denied tobacco/illicit drug use.")
+        profile, risk = full_chain("T_REF_1", "Denied tobacco/illicit drug use.")
         assert profile.smoking.status == "never"
+        assert profile.smoking.polarity == "negated"
         assert profile.drug_use.status == "never"
+        assert profile.drug_use.polarity == "negated"
+        assert risk.individual_scores["smoking"].score == 0.0
+        assert risk.individual_scores["drug_use"].score == 0.0
 
         # 2. Coordinated list negation
-        profile, _ = full_chain("T_REF_2", "Negative for illicit drugs, alcohol, and tobacco.")
+        profile, risk = full_chain("T_REF_2", "Negative for illicit drugs, alcohol, and tobacco.")
         assert profile.smoking.status == "never"
+        assert profile.smoking.polarity == "negated"
         assert profile.drug_use.status == "never"
+        assert profile.drug_use.polarity == "negated"
         assert profile.alcohol.status == "never"
+        assert profile.alcohol.polarity == "negated"
 
         # 3. Social drinker for rarely consumes
-        profile, _ = full_chain("T_REF_3", "Rarely consumes ETOH.")
+        profile, risk = full_chain("T_REF_3", "Rarely consumes ETOH.")
         assert profile.alcohol.pattern == "social"
+        assert profile.alcohol.polarity == "affirmed"
+        assert risk.individual_scores["alcohol"].score == 10.0
 
         # 4. Overweight guard
-        profile, _ = full_chain("T_REF_4", "He currently weighs 312 pounds. Ideal weight is 170 pounds. He is 142 pounds overweight.")
+        profile, risk = full_chain("T_REF_4", "He currently weighs 312 pounds. Ideal weight is 170 pounds. He is 142 pounds overweight.")
         assert profile.bmi.bmi_class is None
+
+        # 5. Family history experiencer override
+        profile, risk = full_chain("T_REF_5", "He lives with both parents and both of them smoke.")
+        assert profile.smoking.experiencer == "family"
+        assert risk.individual_scores["smoking"].score == 20.0  # baseline unknown score
+
+        # 6. Uncertain mention penalty (50% escalation reduction)
+        profile, risk = full_chain("T_REF_6", "Loud snoring noted, sleep apnea suspected.")
+        assert profile.sleep.certainty == "uncertain"
+        # Sleep baseline is 20.0 (no hours given). OSA condition adds 30.0 -> raw score 50.0.
+        # Escalation is 30.0. Penalty is 50% -> final score is 20.0 + 15.0 = 35.0.
+        assert risk.individual_scores["sleep"].score == 35.0
+        assert any("Uncertain/suspected risk for SLEEP" in f for f in risk.clinical_flags)
 
 
 # ─────────────────────────────────────────────

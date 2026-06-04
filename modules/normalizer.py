@@ -34,6 +34,9 @@ class SmokingRecord:
     pack_years: Optional[float] = None
     cigarettes_per_day: Optional[float] = None
     temporal: Optional[str] = None
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -43,6 +46,9 @@ class AlcoholRecord:
     drinks_per_week: Optional[float] = None
     pattern: Optional[str] = None    # social | heavy | binge | rare
     temporal: Optional[str] = None
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -53,6 +59,9 @@ class BMIRecord:
     bmi_class: Optional[str] = None  # underweight|normal|overweight|obese_I|II|III
     weight: Optional[float] = None
     weight_unit: Optional[str] = None
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -62,6 +71,9 @@ class PhysicalActivityRecord:
     days_per_week: Optional[int] = None
     minutes_per_session: Optional[float] = None
     activity_types: List[str] = field(default_factory=list)
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -72,6 +84,9 @@ class SleepRecord:
     osa_status: Optional[str] = None # suspected|confirmed
     on_cpap: bool = False
     snoring: bool = False
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -79,6 +94,9 @@ class DietRecord:
     status: str = "current"
     quality: Optional[str] = None    # poor|moderate|good
     flags: List[str] = field(default_factory=list)
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -87,6 +105,9 @@ class DrugUseRecord:
     substances: List[str] = field(default_factory=list)
     route: Optional[str] = None      # oral|IV|smoked
     temporal: Optional[str] = None
+    experiencer: str = "patient"
+    polarity: str = "affirmed"
+    certainty: str = "certain"
 
 
 @dataclass
@@ -150,6 +171,9 @@ class Normalizer:
 
         # Status: "never" > "former" > "current"
         rec.status = self._consolidate_status([r.status for r in relations])
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         for r in relations:
             if r.unit == "ppd" and r.value is not None:
@@ -175,6 +199,9 @@ class Normalizer:
             return rec
 
         rec.status = self._consolidate_status([r.status for r in relations])
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         for r in relations:
             if r.value is not None:
@@ -207,6 +234,11 @@ class Normalizer:
 
     def _normalize_bmi(self, relations: List[Relation], raw_sentences: List[str] = None) -> BMIRecord:
         rec = BMIRecord()
+        if not relations:
+            return rec
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         # Step 1: Try to get explicit BMI value from NER relations
         for r in relations:
@@ -240,6 +272,9 @@ class Normalizer:
         rec = PhysicalActivityRecord()
         if not relations:
             return rec
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         for r in relations:
             if r.condition:
@@ -278,6 +313,9 @@ class Normalizer:
         rec = SleepRecord()
         if not relations:
             return rec
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         for r in relations:
             # Average range values (e.g., 4-5 hours → 4.5)
@@ -306,6 +344,9 @@ class Normalizer:
         rec = DietRecord()
         if not relations:
             return rec
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         all_flags = []
         quality_votes = {"poor": 0, "moderate": 0, "good": 0}
@@ -327,6 +368,9 @@ class Normalizer:
             return rec
 
         rec.status = self._consolidate_status([r.status for r in relations])
+        rec.experiencer = self._consolidate_experiencer(relations)
+        rec.polarity = self._consolidate_polarity(relations)
+        rec.certainty = self._consolidate_certainty(relations)
 
         substances = []
         for r in relations:
@@ -357,6 +401,29 @@ class Normalizer:
         if "current" in statuses:
             return "current"
         return "unknown"
+
+    def _consolidate_experiencer(self, relations: List[Relation]) -> str:
+        if not relations:
+            return "patient"
+        if any(r.experiencer == "patient" for r in relations):
+            return "patient"
+        if any(r.experiencer == "family" for r in relations):
+            return "family"
+        return "other"
+
+    def _consolidate_polarity(self, relations: List[Relation]) -> str:
+        if not relations:
+            return "affirmed"
+        if any(r.polarity == "affirmed" for r in relations):
+            return "affirmed"
+        return "negated"
+
+    def _consolidate_certainty(self, relations: List[Relation]) -> str:
+        if not relations:
+            return "certain"
+        if any(r.certainty == "certain" for r in relations):
+            return "certain"
+        return "uncertain"
 
     def _classify_bmi(self, bmi: float) -> str:
         if bmi < 18.5:

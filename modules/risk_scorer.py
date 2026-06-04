@@ -210,6 +210,9 @@ class RiskScorer:
         risk.individual_scores["diet"] = self._score_diet(profile.diet)
         risk.individual_scores["drug_use"] = self._score_drug_use(profile.drug_use)
 
+        # Apply experiencer, polarity, and certainty overrides
+        self._apply_attribute_overrides(profile, risk)
+
         # Populate weight and rationale for external interfaces
         for factor, score_obj in risk.individual_scores.items():
             score_obj.weight = self.weights.get(factor, 0.0)
@@ -233,7 +236,7 @@ class RiskScorer:
         risk.summary_statement = self._generate_summary(risk)
 
         # Identify clinical flags
-        risk.clinical_flags = self._identify_flags(profile, risk)
+        risk.clinical_flags.extend(self._identify_flags(profile, risk))
 
         # Estimate mortality risk
         risk.estimated_mortality_risk = self._estimate_mortality_tier(risk.composite_score)
@@ -245,6 +248,72 @@ class RiskScorer:
         )
 
         return risk
+
+    def _apply_attribute_overrides(self, profile: NormalizedPatientProfile, risk: RiskProfile):
+        baselines = {
+            "smoking": 20.0,
+            "alcohol": 15.0,
+            "bmi": 15.0,
+            "physical_activity": 30.0,
+            "sleep": 20.0,
+            "diet": 20.0,
+            "drug_use": 25.0
+        }
+        
+        for factor in baselines.keys():
+            record = getattr(profile, factor, None)
+            if not record:
+                continue
+                
+            score_obj = risk.individual_scores.get(factor)
+            if not score_obj:
+                continue
+                
+            experiencer = getattr(record, "experiencer", "patient")
+            polarity = getattr(record, "polarity", "affirmed")
+            certainty = getattr(record, "certainty", "certain")
+            
+            # Rule 1: Experiencer is not the patient (e.g. family history)
+            if experiencer != "patient":
+                score_obj.score = baselines[factor]
+                score_obj.explanation = f"{factor.replace('_', ' ').capitalize()} details refer to a family member, not the patient. Patient risk is unknown."
+                score_obj.contributing_factors = [f"Mentions family member ({experiencer})"]
+                score_obj.tier = self._score_to_tier(score_obj.score)
+                score_obj.recommendations = [f"Clarify patient's own {factor.replace('_', ' ')} status at next visit."]
+                
+            # Rule 2: Polarity is negated
+            elif polarity == "negated":
+                if factor == "smoking":
+                    score_obj.score = 0.0
+                    score_obj.explanation = "Patient denies smoking/tobacco use."
+                elif factor == "drug_use":
+                    score_obj.score = 0.0
+                    score_obj.explanation = "Patient denies illicit drug use."
+                elif factor == "alcohol":
+                    score_obj.score = 0.0
+                    score_obj.explanation = "Patient denies alcohol use."
+                else:
+                    score_obj.score = 10.0
+                    score_obj.explanation = f"Patient denies issues with {factor.replace('_',' ')}."
+                score_obj.contributing_factors = ["Explicit denial/negation"]
+                score_obj.tier = self._score_to_tier(score_obj.score)
+                
+            # Rule 3: Certainty is uncertain (possible/suspected)
+            elif certainty == "uncertain":
+                base_score = baselines[factor]
+                raw_score = score_obj.score
+                if raw_score > base_score:
+                    # Apply a 50% penalty on the risk escalation above baseline
+                    escalation = raw_score - base_score
+                    score_obj.score = base_score + (escalation * 0.5)
+                    score_obj.explanation = f"[UNCERTAIN] {score_obj.explanation}"
+                    score_obj.contributing_factors.append("Mention has low certainty (suspected/possible)")
+                    score_obj.tier = self._score_to_tier(score_obj.score)
+                    
+                    # Raise a clinical flag
+                    flag_msg = f"Uncertain/suspected risk for {factor.upper()}: needs clinical diagnostic verification."
+                    if flag_msg not in risk.clinical_flags:
+                        risk.clinical_flags.append(flag_msg)
 
     # ── Factor Scoring Methods ──────────────────
 

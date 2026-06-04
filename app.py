@@ -308,9 +308,28 @@ Admits to occasional marijuana use on weekends, denies other drug use.""",
                         st.markdown(f'<span class="{tier_cls}">{tier}</span>', unsafe_allow_html=True)
                         if rf:
                             st.caption(rf.rationale)
+                            # Render structured attributes as pills
+                            record_obj = getattr(result.normalized_profile, factor, None)
+                            if record_obj:
+                                exp = getattr(record_obj, "experiencer", "patient")
+                                pol = getattr(record_obj, "polarity", "affirmed")
+                                cert = getattr(record_obj, "certainty", "certain")
+                                
+                                exp_color = "#2e7d32" if exp == "patient" else "#ef6c00"
+                                pol_color = "#2e7d32" if pol == "affirmed" else "#c62828"
+                                cert_color = "#2e7d32" if cert == "certain" else "#d84315"
+                                
+                                st.markdown(
+                                    f'<div style="margin-top: 5px; margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 5px;">'
+                                    f'<span style="background-color: {exp_color}18; color: {exp_color}; border: 1px solid {exp_color}40; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">Experiencer: {exp.upper()}</span>'
+                                    f'<span style="background-color: {pol_color}18; color: {pol_color}; border: 1px solid {pol_color}40; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">Polarity: {pol.upper()}</span>'
+                                    f'<span style="background-color: {cert_color}18; color: {cert_color}; border: 1px solid {cert_color}40; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">Certainty: {cert.upper()}</span>'
+                                    f'</div>',
+                                    unsafe_allow_html=True
+                                )
                         st.markdown("---")
                         for k, v in data.items():
-                            if v not in (None, [], "unknown", "") and k != "note_id":
+                            if v not in (None, [], "unknown", "") and k != "note_id" and k not in ("experiencer", "polarity", "certainty"):
                                 st.markdown(f"**{k}:** `{v}`")
 
             # ── Optional: Raw Entities ───────────────────

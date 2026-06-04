@@ -43,6 +43,9 @@ class Relation:
     flags: List[str] = field(default_factory=list)  # for diet
     confidence: float = 1.0
     source_entities: List[str] = field(default_factory=list)
+    experiencer: str = "patient"       # "patient", "family", "other"
+    polarity: str = "affirmed"         # "affirmed", "negated"
+    certainty: str = "certain"         # "certain", "uncertain"
 
 
 @dataclass
@@ -153,8 +156,69 @@ class RelationExtractor:
         }
         builder = builders.get(factor)
         if builder:
-            return builder(sentence, entities)
+            relation = builder(sentence, entities)
+            if relation:
+                relation.experiencer = self._determine_experiencer(sentence, entities)
+                relation.polarity = "negated" if relation.status == "never" else "affirmed"
+                relation.certainty = self._determine_certainty(sentence, entities)
+            return relation
         return None
+
+    def _get_entity_clause(self, sentence: str, entity: Entity) -> str:
+        """Get the clause segment of the sentence that contains the entity."""
+        boundaries = [0]
+        boundary_pattern = re.compile(r'[,;.\t]|\b(but|however|except|although|though|yet|still|and)\b', re.I)
+        for m in boundary_pattern.finditer(sentence):
+            boundaries.append(m.start())
+            boundaries.append(m.end())
+        boundaries.append(len(sentence))
+        
+        boundaries = sorted(list(set(boundaries)))
+        
+        for i in range(len(boundaries) - 1):
+            start = boundaries[i]
+            end = boundaries[i+1]
+            if start <= entity.start <= end:
+                return sentence[start:end]
+        return sentence
+
+    def _determine_experiencer(self, sentence: str, entities: List[Entity]) -> str:
+        """Determine if the mention belongs to the patient or a family member."""
+        family_regex = re.compile(
+            r'\b(mother|father|parents?|grandfather|grandmother|grandparent|brother|sister|sibling|uncle|aunt|cousin|family\s+history|fhx)\b',
+            re.I
+        )
+        if not family_regex.search(sentence):
+            return "patient"
+            
+        patient_regex = re.compile(r'\b(patient|pt|he|she|individual|subjective|vitals)\b', re.I)
+        family_pronoun_regex = re.compile(r'\b(they|them|both|parents?|mother|father|sibling|brother|sister)\b', re.I)
+        
+        for e in entities:
+            clause = self._get_entity_clause(sentence, e)
+            if family_regex.search(clause) or family_pronoun_regex.search(clause):
+                if patient_regex.search(clause) and not re.search(r'\b(?:they|both|them)\b', clause, re.I):
+                    return "patient"
+                return "family"
+            if patient_regex.search(clause):
+                return "patient"
+                
+        if re.match(r'^(?:family\s+history|fhx)', sentence.strip(), re.I):
+            return "family"
+            
+        return "patient"
+
+    def _determine_certainty(self, sentence: str, entities: List[Entity]) -> str:
+        """Determine if the mention is certain or uncertain."""
+        uncertainty_regex = re.compile(
+            r'\b(possible|suspected|rule\s+out|r/o|probable|likely|suggests?|evaluat(e|ing)\s+for|query|borderline|questionable)\b',
+            re.I
+        )
+        for e in entities:
+            clause = self._get_entity_clause(sentence, e)
+            if uncertainty_regex.search(clause):
+                return "uncertain"
+        return "certain"
 
     def _is_entity_negated(self, sentence: str, entity: Entity) -> bool:
         """Determine if a specific entity is within a negation scope in the sentence."""
