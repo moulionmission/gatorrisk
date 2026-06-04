@@ -49,6 +49,8 @@ class FactorRiskScore:
     explanation: str  # Human-readable summary
     contributing_factors: List[str] = field(default_factory=list)  # What drove the score
     recommendations: List[str] = field(default_factory=list)  # Action items
+    weight: float = 0.0
+    rationale: str = ""
 
 
 # ─────────────────────────────────────────────
@@ -207,6 +209,11 @@ class RiskScorer:
         risk.individual_scores["sleep"] = self._score_sleep(profile.sleep)
         risk.individual_scores["diet"] = self._score_diet(profile.diet)
         risk.individual_scores["drug_use"] = self._score_drug_use(profile.drug_use)
+
+        # Populate weight and rationale for external interfaces
+        for factor, score_obj in risk.individual_scores.items():
+            score_obj.weight = self.weights.get(factor, 0.0)
+            score_obj.rationale = score_obj.explanation
 
         # Compute composite score
         composite = sum(
