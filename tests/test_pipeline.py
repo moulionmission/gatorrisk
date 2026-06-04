@@ -250,6 +250,26 @@ class TestNormalizationAndScoring:
         assert profile.diet.quality == "poor"
         assert len(profile.diet.flags) > 0
 
+    def test_pipeline_refinements(self, full_chain):
+        # 1. Past-tense denies
+        profile, _ = full_chain("T_REF_1", "Denied tobacco/illicit drug use.")
+        assert profile.smoking.status == "never"
+        assert profile.drug_use.status == "never"
+
+        # 2. Coordinated list negation
+        profile, _ = full_chain("T_REF_2", "Negative for illicit drugs, alcohol, and tobacco.")
+        assert profile.smoking.status == "never"
+        assert profile.drug_use.status == "never"
+        assert profile.alcohol.status == "never"
+
+        # 3. Social drinker for rarely consumes
+        profile, _ = full_chain("T_REF_3", "Rarely consumes ETOH.")
+        assert profile.alcohol.pattern == "social"
+
+        # 4. Overweight guard
+        profile, _ = full_chain("T_REF_4", "He currently weighs 312 pounds. Ideal weight is 170 pounds. He is 142 pounds overweight.")
+        assert profile.bmi.bmi_class is None
+
 
 # ─────────────────────────────────────────────
 # Risk Scorer Tests

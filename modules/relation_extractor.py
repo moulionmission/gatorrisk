@@ -75,7 +75,7 @@ class RelationExtractor:
     # Status patterns (shared across factors)
     STATUS_PATTERNS = {
         "never": re.compile(
-            r'\b(never|denies?|no\s+history\s+of|non[-\s]?smoker|nonsmoker|drug[-\s]free|abstain|teetotal)\b', re.I
+            r'\b(never|denies?|denied|negative(\s+for)?|no\s+history\s+of|non[-\s]?smoker|nonsmoker|drug[-\s]free|abstain|teetotal|no\b)', re.I
         ),
         "former": re.compile(
             r'\b(former\s+smoker|ex[-\s]?smoker|stopped\s+smoking|ceased\s+smoking|used\s+to\s+smoke|in\s+recovery|sober|sobriety)\b', re.I
@@ -156,6 +156,26 @@ class RelationExtractor:
             return builder(sentence, entities)
         return None
 
+    def _is_entity_negated(self, sentence: str, entity: Entity) -> bool:
+        """Determine if a specific entity is within a negation scope in the sentence."""
+        neg_pattern = re.compile(
+            r'\b(never|denies?|denied|negative(\s+for)?|no\s+history\s+of|without|no)\b', re.I
+        )
+        prefix = sentence[:entity.start]
+        matches = list(neg_pattern.finditer(prefix))
+        if not matches:
+            return False
+        
+        last_match = matches[-1]
+        last_match_end = last_match.end()
+        
+        terminator_pattern = re.compile(r'\b(but|however|except|although|though|yet|still)\b', re.I)
+        between_text = prefix[last_match_end:]
+        if terminator_pattern.search(between_text):
+            return False
+            
+        return True
+
     def _determine_status(self, sentence: str, entities: List[Entity]) -> str:
         """Determine current/former/never status from sentence context."""
         sub_labels = {e.sub_label for e in entities}
@@ -168,6 +188,10 @@ class RelationExtractor:
                 return "former"
             if "current" in sub:
                 return "current"
+
+        # Check if the specific entities representing this factor are negated via NegEx scoping
+        if entities and any(self._is_entity_negated(sentence, e) for e in entities):
+            return "never"
 
         # Fall back to sentence-level pattern matching
         if self.STATUS_PATTERNS["never"].search(sentence):
@@ -324,7 +348,12 @@ class RelationExtractor:
                 elif "class i" in text_lower or "class 1" in text_lower:
                     rel.flags.append("obese_I")
                 elif "overweight" in text_lower:
-                    rel.flags.append("overweight")
+                    # Guard against "X pounds overweight"
+                    prefix_sec = sentence[max(0, e.start - 25):e.start].lower()
+                    if re.search(r'\d+\s*(?:lbs?|pounds?)\s*$', prefix_sec):
+                        logger.info("Ignoring 'overweight' entity because it is part of a 'pounds overweight' phrase.")
+                    else:
+                        rel.flags.append("overweight")
                 elif "underweight" in text_lower:
                     rel.flags.append("underweight")
             elif e.sub_label == "bmi_weight":

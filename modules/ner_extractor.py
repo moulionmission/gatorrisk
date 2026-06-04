@@ -108,7 +108,7 @@ class RuleBasedExtractor:
             # "one alcoholic drink per day" — common phrasing
             (re.compile(r'(one|two|three|four|five|six)\s+alcoholic\s+drink[s]?\s*(per|a)\s*(day|week|night)', re.I), "alcohol_quantity_words"),
             (re.compile(r'\bone\s+drink\s+(?:per|a)\s+day\b', re.I), "alcohol_quantity"),
-            (re.compile(r'\b(social\s+drinker|drinks\s+socially|occasional\s+(?:alcohol|drink|drinker))\b', re.I), "alcohol_social"),
+            (re.compile(r'\b(social\s+drinker|drinks\s+socially|occasional\s+(?:alcohol|drink|drinker)|rarely\s+(?:consumes|drinks|uses)(?:\s+alcohol|\s+etoh)?)\b', re.I), "alcohol_social"),
             (re.compile(r'\b(heavy\s+drinker|heavy\s+alcohol\s+use|alcohol\s+abuse|alcoholism)\b', re.I), "alcohol_heavy"),
             (re.compile(r'\b(sober|sobriety|in\s+recovery|abstains?\s+from\s+alcohol|quit\s+drinking)\b', re.I), "alcohol_former"),
             (re.compile(r'\b(denies\s+alcohol|no\s+alcohol|teetotal|never\s+drinks|negative\s+for\s+alcohol)\b', re.I), "alcohol_never"),
