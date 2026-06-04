@@ -364,6 +364,8 @@ class RiskScorer:
         )
 
         status = record.status.lower() if record.status else "unknown"
+        if status == "current" and record.pattern:
+            status = record.pattern.lower()
 
         if status in ("never", "abstainer"):
             score.score = 0
