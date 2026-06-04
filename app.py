@@ -386,6 +386,8 @@ with tab2:
             process_all = st.checkbox("Process entire file (may be slow for large files)")
             if process_all:
                 limit = len(df_up)
+            elif len(df_up) <= 5:
+                limit = len(df_up)
             else:
                 limit = st.slider("Max notes to process", 5, min(500, len(df_up)), min(200, len(df_up)))
 
